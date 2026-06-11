@@ -1,9 +1,8 @@
 """
 Команда скачивания работ студентов через headless-браузер (Playwright).
-
-Установка зависимостей (Ubuntu / Windows 10):
-    pip install playwright
-    playwright install chromium
+Открывает одну страницу со списком студентов, прокручивает контейнер со студентами
+(q-scrollarea students-list-block-component) для загрузки всех (виртуальная прокрутка),
+затем кликает по каждой строке, ищет кнопку скачивания и сохраняет файл.
 """
 
 import hashlib
@@ -11,6 +10,10 @@ import logging
 import os
 import tempfile
 from pathlib import Path
+import concurrent.futures
+import json
+import re
+import time
 
 from django.core.management.base import BaseCommand
 from playwright.sync_api import sync_playwright, TimeoutError as PwTimeout
@@ -20,60 +23,62 @@ from parser.solutions import SOLUTIONS_DIR, _ensure_solutions_dir
 
 logger = logging.getLogger(__name__)
 
-SOLUTION_URL_TPL = (
-    "https://www.odin.study/ru/ActivitySolution/Index/{activity_id}"
-    "?studentId={student_id}&userName="
+ACTIVITY_URL_TPL = (
+    "https://www.odin.study/ru/ActivitySolution/Index/{activity_id}?userName="
 )
-MAX_RETRIES = 5
-WAIT_TIMEOUT_MS = 2000
+
+MAX_RETRIES = 1
+WAIT_TIMEOUT_MS = 500
 
 
 class Command(BaseCommand):
     help = (
         "Скачивание работ студентов группы для одной активности (через Playwright). "
+        "Открывает одну страницу, перебирает строки студентов и скачивает файлы. "
         "Пример: python manage.py download_activity_works 2191122 60435"
     )
 
     def add_arguments(self, parser):
         parser.add_argument("activity_id", type=int, help="ID активности")
         parser.add_argument("group_id", type=int, help="ID группы")
+        parser.add_argument("--headed", action="store_true", help="Показать браузер (не headless)")
 
     def handle(self, *args, **options):
-        token = os.getenv("ODIN_BEARER_TOKEN")
-        if not token:
+        auth_store_json = os.getenv("ODIN_AUTHORIZATIONSTORE")
+        bearer_token = os.getenv("ODIN_BEARER_TOKEN")
+        if not auth_store_json and not bearer_token:
             self.stderr.write(self.style.ERROR(
-                "Не задан токен. Укажите ODIN_BEARER_TOKEN в .env или переменных окружения."
+                "Не заданы авторизационные данные. Укажите ODIN_AUTHORIZATIONSTORE или ODIN_BEARER_TOKEN в .env"
             ))
             return
+        if auth_store_json:
+            self.stdout.write("Использую ODIN_AUTHORIZATIONSTORE (localStorage)")
+        else:
+            self.stdout.write("Использую ODIN_BEARER_TOKEN (HTTP header)")
 
         activity_id = options["activity_id"]
         group_id = options["group_id"]
+        headed = options.get("headed", False)
 
         act = Activity.objects.filter(id=activity_id).first()
         if not act:
-            self.stderr.write(self.style.ERROR(
-                f"Активность с ID={activity_id} не найдена в БД."
-            ))
+            self.stderr.write(self.style.ERROR(f"Активность с ID={activity_id} не найдена в БД."))
             return
 
         group = Group.objects.filter(id=group_id).first()
         if not group:
-            self.stderr.write(self.style.ERROR(
-                f"Группа с ID={group_id} не найдена в БД."
-            ))
+            self.stderr.write(self.style.ERROR(f"Группа с ID={group_id} не найдена в БД."))
             return
 
-        students = list(Student.objects.filter(group=group))
-        if not students:
-            self.stderr.write(self.style.ERROR(
-                "В группе нет студентов. Сначала запустите parse_odin_structure."
-            ))
+        students_info = list(Student.objects.filter(group=group).order_by('last_name', 'first_name'))
+        if not students_info:
+            self.stderr.write(self.style.ERROR("В группе нет студентов. Сначала запустите parse_odin_structure."))
             return
 
         self.stdout.write(
             f'[+] Активность ID={activity_id} ("{act.name or "—"}") | '
             f'Группа ID={group_id} ("{group.title or "—"}") | '
-            f'Студентов: {len(students)}'
+            f'Студентов в БД: {len(students_info)}'
         )
 
         _ensure_solutions_dir()
@@ -82,40 +87,174 @@ class Command(BaseCommand):
         skip_count = 0
 
         selector = (
-            'path[d="M4 15.429V19a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3.571'
-            'M12 4v10.286m0 0L7.429 9.714M12 14.286l4.571-4.572"]'
+            'path[d="M4 15.429V19a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3.571M12 4v10.286m0 0L7.429 9.714M12 14.286l4.571-4.572"]'
         )
 
+        def get_student_id_from_url():
+            match = re.search(r'[?&]studentId=(\d+)', page.url)
+            return int(match.group(1)) if match else None
+
         with sync_playwright() as pw:
-            browser = pw.chromium.launch(headless=True)
+            browser = pw.chromium.launch(headless=not headed)
+            executor = concurrent.futures.ThreadPoolExecutor()
 
-            for student in students:
-                self.stdout.write(f"  [Браузер] Открываю страницу студента ID={student.id}...")
+            context = browser.new_context()
+            if auth_store_json:
+                context.add_init_script(f"""
+                    localStorage.setItem('authorizationStore', {json.dumps(auth_store_json)});
+                """)
+            else:
+                context.set_extra_http_headers({"Authorization": f"Bearer {bearer_token}"})
 
-                existing = StudentWork.objects.filter(
-                    student_id=student.id, activity=act,
-                ).first()
-                if existing:
-                    self.stdout.write(
-                        f"    -> [Кэш] Уже есть в БД (хэш: {existing.file_hash[:16]}…)"
+            page = context.new_page()
+
+            url = ACTIVITY_URL_TPL.format(activity_id=activity_id)
+            self.stdout.write(f"Открываю страницу: {url}")
+            try:
+                page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            except Exception as e:
+                self.stderr.write(self.style.ERROR(f"Не удалось загрузить страницу: {e}"))
+                context.close()
+                browser.close()
+                return
+
+            container_selector = ".q-card.no-shadow.no-border.no-border-radius"
+            try:
+                container = page.wait_for_selector(container_selector, timeout=8000)
+                if not container:
+                    raise Exception("Контейнер не найден")
+            except Exception as e:
+                self.stderr.write(self.style.ERROR(f"Не найден div с классом '{container_selector}': {e}"))
+                context.close()
+                browser.close()
+                return
+
+            # Ищем скроллируемый элемент внутри контейнера: q-scrollarea students-list-block-component
+            scrollable_selector = ".q-scrollarea__container.scroll.relative-position.fit.hide-scrollbar"
+            scrollable = page.query_selector(scrollable_selector)
+            if not scrollable:
+                self.stderr.write(self.style.WARNING(f"Не найден элемент '{scrollable_selector}', пробуем найти любой скроллируемый потомок"))
+                # Поищем элемент с прокруткой
+                scrollable = page.evaluate_handle("""
+                    (container) => {
+                        const scrollables = container.querySelectorAll('.q-scrollarea, .students-list-block-component, [style*="overflow"]');
+                        for (let el of scrollables) {
+                            const style = window.getComputedStyle(el);
+                            if (style.overflowY === 'auto' || style.overflowY === 'scroll') {
+                                return el;
+                            }
+                        }
+                        // Если нет, попробуем сам container
+                        if (container.scrollHeight > container.clientHeight) return container;
+                        return null;
+                    }
+                """, container)
+                if scrollable:
+                    scrollable = scrollable.as_element()
+                else:
+                    scrollable = container
+
+            if not scrollable:
+                self.stderr.write(self.style.ERROR("Не удалось найти скроллируемый элемент для прокрутки списка студентов."))
+                context.close()
+                browser.close()
+                return
+
+            self.stdout.write("Прокручиваю список студентов для подгрузки всех...")
+            print(scrollable)
+            for scroll_step in range(3):
+                # Прокручиваем найденный элемент до низа
+                scrollable.evaluate("el => el.scrollTop = el.scrollHeight", scrollable)
+                time.sleep(2)
+                self.stdout.write(f"  Прокрутка {scroll_step+1}/3 выполнена")
+                page.wait_for_timeout(500)
+
+            # Получаем все строки студентов после прокрутки
+            student_rows = container.query_selector_all(
+                "div[class='q-card__section q-card__section--vert student-list-item-component cursor-pointer']"
+            )
+            if not student_rows:
+                # Возможно, класс немного отличается, пробуем более общий селектор
+                student_rows = container.query_selector_all(".student-list-item-component")
+            if not student_rows:
+                self.stderr.write(self.style.ERROR("Не найдены строки студентов внутри контейнера."))
+                context.close()
+                browser.close()
+                return
+
+            self.stdout.write(f"Найдено строк студентов на странице: {len(student_rows)}")
+
+            if len(student_rows) != len(students_info):
+                self.stdout.write(self.style.WARNING(
+                    f"Количество строк на странице ({len(student_rows)}) "
+                    f"не совпадает с количеством студентов в БД ({len(students_info)}). "
+                    "Будем ориентироваться на studentId из URL."
+                ))
+
+            current_student_id = get_student_id_from_url()
+            start_index = 0
+            if current_student_id is not None:
+                for i, row in enumerate(student_rows):
+                    if i < len(students_info) and students_info[i].id == current_student_id:
+                        start_index = i
+                        break
+                else:
+                    start_index = 0
+                    current_student_id = None
+
+            if current_student_id is None:
+                self.stdout.write("Ни один студент не открыт, кликаю по первому...")
+                try:
+                    student_rows[0].click()
+                    page.wait_for_function(
+                        "url => window.location.href.includes('studentId=')",
+                        timeout=5000
                     )
-                    cache_count += 1
+                    page.wait_for_timeout(1000)
+                    current_student_id = get_student_id_from_url()
+                    if current_student_id is None:
+                        raise Exception("Не удалось получить studentId после клика")
+                    start_index = 0
+                except Exception as e:
+                    self.stderr.write(self.style.ERROR(f"Не удалось открыть первого студента: {e}"))
+                    context.close()
+                    browser.close()
+                    return
+
+            for idx in range(start_index, len(student_rows)):
+                row = student_rows[idx]
+                if idx != start_index:
+                    try:
+                        row.click()
+                        page.wait_for_function(
+                            "url => window.location.href.includes('studentId=')",
+                            timeout=5000
+                        )
+                        page.wait_for_timeout(1000)
+                        current_student_id = get_student_id_from_url()
+                        if current_student_id is None:
+                            raise Exception("studentId не появился")
+                    except Exception as e:
+                        self.stdout.write(f"  -> [Ошибка] Не удалось кликнуть по строке {idx+1}: {e}")
+                        skip_count += 1
+                        continue
+
+                current_student = executor.submit(
+                    lambda sid=current_student_id: Student.objects.filter(id=sid, group=group).first()
+                ).result()
+                if not current_student:
+                    self.stdout.write(f"  -> [Ошибка] Студент с ID={current_student_id} не найден в группе {group_id}")
+                    skip_count += 1
                     continue
 
-                url = SOLUTION_URL_TPL.format(
-                    activity_id=activity_id, student_id=student.id,
-                )
-                context = browser.new_context(
-                    extra_http_headers={"Authorization": f"Bearer {token}"},
-                )
-                page = context.new_page()
+                self.stdout.write(f"\n[{idx+1}/{len(student_rows)}] Студент: {current_student.last_name} {current_student.first_name} (ID={current_student.id})")
 
-                try:
-                    page.goto(url, wait_until="domcontentloaded", timeout=30000)
-                except Exception as e:
-                    self.stdout.write(f"    -> [Ошибка] Не удалось загрузить страницу: {e}")
-                    context.close()
-                    skip_count += 1
+                existing = executor.submit(
+                    lambda sid=current_student.id: StudentWork.objects.filter(student_id=sid, activity=act).first()
+                ).result()
+                if existing:
+                    self.stdout.write(f"  -> [Кэш] Уже есть в БД (хэш: {existing.file_hash[:16]}…)")
+                    cache_count += 1
                     continue
 
                 found = False
@@ -127,47 +266,37 @@ class Command(BaseCommand):
                         break
                     except PwTimeout:
                         self.stdout.write(
-                            f"    -> [Ожидание] Кнопка не найдена, "
-                            f"попытка {attempt}/{MAX_RETRIES}..."
+                            f"  -> [Ожидание] Кнопка не найдена, попытка {attempt}/{MAX_RETRIES}..."
                         )
+                        if attempt < MAX_RETRIES:
+                            page.wait_for_timeout(1000)
 
                 if not found:
-                    self.stdout.write(
-                        f"    -> [Пусто] Студент ID={student.id} не прикрепил работу "
-                        f"после {MAX_RETRIES} проверок."
-                    )
-                    context.close()
+                    self.stdout.write(f"  -> [Пусто] Студент {current_student.last_name} {current_student.first_name} не прикрепил работу.")
                     skip_count += 1
                     continue
 
-                # Клик и перехват скачивания
-                self.stdout.write(
-                    "    -> [Клик] Кнопка найдена! Перехват скачивания из Yandex Cloud..."
-                )
+                self.stdout.write("  -> [Клик] Кнопка найдена! Перехват скачивания из Yandex Cloud...")
                 try:
                     with page.expect_download(timeout=30000) as download_info:
                         page.locator(selector).click()
                     download = download_info.value
                 except Exception as e:
-                    self.stdout.write(f"    -> [Ошибка] Не удалось скачать файл: {e}")
-                    context.close()
+                    self.stdout.write(f"  -> [Ошибка] Не удалось скачать файл: {e}")
                     skip_count += 1
                     continue
 
-                # Сохраняем во временный файл
                 tmp = tempfile.NamedTemporaryFile(delete=False)
                 tmp_path = tmp.name
                 tmp.close()
                 try:
                     download.save_as(tmp_path)
                 except Exception as e:
-                    self.stdout.write(f"    -> [Ошибка] Сохранение файла не удалось: {e}")
+                    self.stdout.write(f"  -> [Ошибка] Сохранение файла не удалось: {e}")
                     Path(tmp_path).unlink(missing_ok=True)
-                    context.close()
                     skip_count += 1
                     continue
 
-                # SHA-256
                 sha256 = hashlib.sha256()
                 with open(tmp_path, "rb") as f:
                     for chunk in iter(lambda: f.read(8192), b""):
@@ -178,7 +307,9 @@ class Command(BaseCommand):
                 ext = Path(suggested).suffix if "." in suggested else ".bin"
                 final_path = SOLUTIONS_DIR / f"{file_hash}{ext}"
 
-                existing_file = StudentWork.objects.filter(file_hash=file_hash).first()
+                existing_file = executor.submit(
+                    lambda h=file_hash: StudentWork.objects.filter(file_hash=h).first()
+                ).result()
                 if existing_file:
                     Path(tmp_path).unlink(missing_ok=True)
                     local_path = existing_file.local_path
@@ -190,18 +321,18 @@ class Command(BaseCommand):
                     msg = "Сохранено как новый файл"
                     ok_count += 1
 
-                StudentWork.objects.update_or_create(
-                    student_id=student.id,
-                    activity=act,
-                    defaults={
-                        "file_hash": file_hash,
-                        "local_path": local_path,
-                    },
-                )
+                executor.submit(
+                    lambda sid=current_student.id, act=act, fhash=file_hash, lpath=local_path:
+                    StudentWork.objects.update_or_create(
+                        student_id=sid,
+                        activity=act,
+                        defaults={"file_hash": fhash, "local_path": lpath},
+                    )
+                ).result()
+                self.stdout.write(f"  -> [Успех] {msg}. Хэш: {file_hash[:16]}…")
 
-                self.stdout.write(f"    -> [Успех] {msg}. Хэш: {file_hash[:16]}…")
-                context.close()
-
+            executor.shutdown()
+            context.close()
             browser.close()
 
         self.stdout.write("")
