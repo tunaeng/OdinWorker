@@ -1,0 +1,130 @@
+from django.db import models
+
+
+class University(models.Model):
+    id = models.IntegerField(primary_key=True, verbose_name="ID университета")
+    name = models.CharField(max_length=512, verbose_name="Название")
+    city_name = models.CharField(max_length=256, verbose_name="Город", null=True, blank=True)
+    library_id = models.IntegerField(verbose_name="ID библиотеки", null=True, blank=True)
+
+    class Meta:
+        verbose_name = "Университет"
+        verbose_name_plural = "Университеты"
+
+    def __str__(self):
+        return self.name or f"University #{self.id}"
+
+
+class Division(models.Model):
+    id = models.IntegerField(primary_key=True, verbose_name="ID дивизиона")
+    university = models.ForeignKey(
+        University, on_delete=models.CASCADE,
+        related_name="divisions", verbose_name="Университет"
+    )
+    name = models.CharField(max_length=512, verbose_name="Название")
+    short_name = models.CharField(max_length=256, verbose_name="Короткое название", null=True, blank=True)
+    type_of_string = models.CharField(max_length=256, verbose_name="Тип", null=True, blank=True)
+
+    class Meta:
+        verbose_name = "Дивизион"
+        verbose_name_plural = "Дивизионы"
+
+    def __str__(self):
+        return self.name or f"Division #{self.id}"
+
+
+class EducationalProgram(models.Model):
+    id = models.IntegerField(primary_key=True, verbose_name="ID программы")
+    division = models.ForeignKey(
+        Division, on_delete=models.CASCADE,
+        related_name="educational_programs", verbose_name="Дивизион"
+    )
+    name = models.CharField(max_length=512, verbose_name="Название")
+    short_name = models.CharField(max_length=256, verbose_name="Короткое название", null=True, blank=True)
+    degree = models.CharField(max_length=256, verbose_name="Степень", null=True, blank=True)
+
+    class Meta:
+        verbose_name = "Образовательная программа"
+        verbose_name_plural = "Образовательные программы"
+
+    def __str__(self):
+        return self.name or f"EducationalProgram #{self.id}"
+
+
+class Cohort(models.Model):
+    id = models.IntegerField(primary_key=True, verbose_name="ID потока")
+    educational_program = models.ForeignKey(
+        EducationalProgram, on_delete=models.CASCADE,
+        related_name="cohorts", verbose_name="Образовательная программа"
+    )
+    name = models.CharField(max_length=512, verbose_name="Имя", null=True, blank=True)
+    title = models.CharField(max_length=512, verbose_name="Название", null=True, blank=True)
+    start_education_date = models.DateTimeField(
+        verbose_name="Дата начала обучения", null=True, blank=True
+    )
+    end_education_date = models.DateTimeField(
+        verbose_name="Дата окончания обучения", null=True, blank=True
+    )
+
+    class Meta:
+        verbose_name = "Поток"
+        verbose_name_plural = "Потоки"
+
+    def __str__(self):
+        return self.title or self.name or f"Cohort #{self.id}"
+
+
+class Group(models.Model):
+    id = models.IntegerField(primary_key=True, verbose_name="ID группы")
+    cohort = models.ForeignKey(
+        Cohort, on_delete=models.CASCADE,
+        related_name="groups", verbose_name="Поток"
+    )
+    title = models.CharField(max_length=512, verbose_name="Название", null=True, blank=True)
+    students_number = models.PositiveIntegerField(
+        verbose_name="Количество студентов", null=True, blank=True
+    )
+
+    class Meta:
+        verbose_name = "Группа"
+        verbose_name_plural = "Группы"
+
+    def __str__(self):
+        return self.title or f"Group #{self.id}"
+
+
+class Discipline(models.Model):
+    id = models.IntegerField(primary_key=True, verbose_name="ID дисциплины")
+    cohort = models.ForeignKey(
+        Cohort, on_delete=models.CASCADE,
+        related_name="disciplines", verbose_name="Поток"
+    )
+    name = models.CharField(max_length=512, verbose_name="Название", null=True, blank=True)
+
+    class Meta:
+        verbose_name = "Дисциплина"
+        verbose_name_plural = "Дисциплины"
+
+    def __str__(self):
+        return self.name or f"Discipline #{self.id}"
+
+
+class Activity(models.Model):
+    id = models.IntegerField(primary_key=True, verbose_name="ID активности")
+    discipline = models.ForeignKey(
+        Discipline, on_delete=models.CASCADE,
+        related_name="activities", verbose_name="Дисциплина"
+    )
+    name = models.CharField(max_length=512, verbose_name="Название", null=True, blank=True)
+    type = models.CharField(max_length=256, verbose_name="Тип", null=True, blank=True)
+    type_id = models.IntegerField(verbose_name="ID типа", null=True, blank=True)
+    start_date = models.DateTimeField(verbose_name="Дата начала", null=True, blank=True)
+    end_date = models.DateTimeField(verbose_name="Дата окончания", null=True, blank=True)
+    duration = models.IntegerField(verbose_name="Длительность (мин)", null=True, blank=True)
+
+    class Meta:
+        verbose_name = "Активность"
+        verbose_name_plural = "Активности"
+
+    def __str__(self):
+        return self.name or f"Activity #{self.id}"
