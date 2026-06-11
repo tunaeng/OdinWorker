@@ -14,6 +14,7 @@ from parser.models import (
     Division,
     EducationalProgram,
     Group,
+    Student,
     University,
 )
 
@@ -87,6 +88,12 @@ class OdinClient:
             params={"disciplineId": discipline_id},
         )
 
+    def get_group_info(self, group_id):
+        return self._request(
+            "GET", f"{BASE_URL}/Group/Info",
+            params={"groupId": group_id},
+        )
+
 
 def save_university(raw):
     data = unwrap_entity(raw)
@@ -157,18 +164,55 @@ def save_cohort(raw, educational_program):
 
 
 def save_groups_from_cohort(cohort, cohort_entity):
+    """Сохранить группы из данных потока и вернуть список сохранённых объектов."""
     groups_data = cohort_entity.get("groups") or []
-    saved = 0
+    saved = []
     for grp in groups_data:
         grp_id = grp.get("id")
         if not grp_id:
             continue
-        Group.objects.update_or_create(
+        obj, _ = Group.objects.update_or_create(
             id=grp_id,
             defaults={
                 "cohort": cohort,
                 "title": grp.get("title"),
                 "students_number": grp.get("studentsNumber"),
+            },
+        )
+        saved.append(obj)
+    return saved
+
+
+def save_students_for_group(client, group):
+    """Запросить детальную информацию о группе и сохранить студентов."""
+    raw = client.get_group_info(group.id)
+    if not raw:
+        return 0
+
+    entity = unwrap_entity(raw)
+    if not entity:
+        return 0
+
+    # Массив студентов может называться по-разному — перебираем варианты
+    students_data = (
+        entity.get("students")
+        or entity.get("users")
+        or entity.get("members")
+        or entity.get("persons")
+        or []
+    )
+    saved = 0
+    for s in students_data:
+        sid = s.get("id")
+        if not sid:
+            continue
+        Student.objects.update_or_create(
+            id=sid,
+            defaults={
+                "group": group,
+                "first_name": s.get("firstName") or s.get("first_name"),
+                "last_name": s.get("lastName") or s.get("last_name"),
+                "middle_name": s.get("middleName") or s.get("middle_name"),
             },
         )
         saved += 1
@@ -217,7 +261,7 @@ def fetch_discipline_activities(client, discipline):
 
 
 class Command(BaseCommand):
-    help = "Парсинг данных из LMS Odin по API и сохранение в БД"
+    help = "Парсинг структуры (University → Discipline) из LMS Odin"
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -227,7 +271,6 @@ class Command(BaseCommand):
             help="ID университетов для парсинга (например, 1 2 3)",
         )
 
-    # noinspection PyAttributeOutsideInit
     def handle(self, *args, **options):
         token = os.getenv("ODIN_BEARER_TOKEN")
         if not token:
@@ -322,10 +365,19 @@ class Command(BaseCommand):
                         coh_title = cohort.title or f"ID={cohort.id}"
                         self.stdout.write(f'      * Поток ID={cohort.id} ("{coh_title}")')
 
-                        group_count = save_groups_from_cohort(cohort, coh_entity)
-                        if group_count:
-                            self.stdout.write(f'          Групп: {group_count}')
-                        stats["Групп"] += group_count
+                        # Группы берутся из данных потока
+                        saved_groups = save_groups_from_cohort(cohort, coh_entity)
+                        if saved_groups:
+                            self.stdout.write(f'          Групп: {len(saved_groups)}')
+                        stats["Групп"] += len(saved_groups)
+
+                        # Студенты — через API каждой группы
+                        student_count = 0
+                        for grp in saved_groups:
+                            student_count += save_students_for_group(client, grp)
+                        if student_count:
+                            self.stdout.write(f'          Студентов: {student_count}')
+                        stats["Студентов"] += student_count
 
                         for disc_ref in coh_entity.get("disciplines") or []:
                             disc_id = disc_ref.get("id")

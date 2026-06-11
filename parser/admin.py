@@ -7,6 +7,8 @@ from parser.models import (
     Division,
     EducationalProgram,
     Group,
+    Student,
+    StudentWork,
     University,
 )
 admin.site.site_header = "Odin Worker Administration"
@@ -173,3 +175,34 @@ class ActivityAdmin(admin.ModelAdmin):
         return super().get_queryset(request).select_related(
             "discipline__cohort__educational_program__division__university",
         )
+
+
+# ---------------------------------------------------------------------------
+# Student
+# ---------------------------------------------------------------------------
+
+@admin.register(Student)
+class StudentAdmin(admin.ModelAdmin):
+    list_display = ("id", "last_name", "first_name", "middle_name", "group")
+    search_fields = ("last_name", "first_name")
+    list_filter = ("group",)
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related(
+            "group__cohort__educational_program__division__university",
+        )
+
+
+# ---------------------------------------------------------------------------
+# StudentWork
+# ---------------------------------------------------------------------------
+
+@admin.register(StudentWork)
+class StudentWorkAdmin(admin.ModelAdmin):
+    list_display = ("id", "student_id", "activity", "file_hash_short", "parsed_at")
+    list_filter = ("parsed_at", "activity__type")
+    search_fields = ("file_hash",)
+
+    @admin.display(description="SHA-256")
+    def file_hash_short(self, obj):
+        return obj.file_hash[:16] + "…" if obj.file_hash else "—"

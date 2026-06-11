@@ -1,4 +1,5 @@
 from django.db import models
+from django.utils import timezone
 
 
 class University(models.Model):
@@ -128,3 +129,43 @@ class Activity(models.Model):
 
     def __str__(self):
         return self.name or f"Activity #{self.id}"
+
+
+class Student(models.Model):
+    id = models.IntegerField(primary_key=True, verbose_name="ID студента")
+    group = models.ForeignKey(
+        Group, on_delete=models.CASCADE,
+        related_name="students", verbose_name="Группа",
+    )
+    first_name = models.CharField(max_length=256, verbose_name="Имя", null=True, blank=True)
+    last_name = models.CharField(max_length=256, verbose_name="Фамилия", null=True, blank=True)
+    middle_name = models.CharField(max_length=256, verbose_name="Отчество", null=True, blank=True)
+
+    class Meta:
+        verbose_name = "Студент"
+        verbose_name_plural = "Студенты"
+
+    def __str__(self):
+        parts = [p for p in (self.last_name, self.first_name, self.middle_name) if p]
+        return " ".join(parts) or f"Student #{self.id}"
+
+
+class StudentWork(models.Model):
+    student_id = models.IntegerField(verbose_name="ID студента")
+    activity = models.ForeignKey(
+        Activity, on_delete=models.CASCADE,
+        related_name="student_works", verbose_name="Активность"
+    )
+    file_hash = models.CharField(max_length=64, verbose_name="SHA-256 хэш файла")
+    local_path = models.CharField(max_length=1024, verbose_name="Путь к файлу на диске")
+    parsed_at = models.DateTimeField(
+        default=timezone.now, verbose_name="Дата загрузки"
+    )
+
+    class Meta:
+        verbose_name = "Работа студента"
+        verbose_name_plural = "Работы студентов"
+        unique_together = ("student_id", "activity")
+
+    def __str__(self):
+        return f"Student {self.student_id} / Activity {self.activity_id}"
