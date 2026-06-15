@@ -8,6 +8,7 @@
 import hashlib
 import logging
 import os
+import shutil
 import tempfile
 from pathlib import Path
 import concurrent.futures
@@ -58,7 +59,7 @@ class Command(BaseCommand):
 
         activity_id = options["activity_id"]
         group_id = options["group_id"]
-        headed = options.get("headed", False)
+        headed = options.get("headed", True)
 
         act = Activity.objects.filter(id=activity_id).first()
         if not act:
@@ -95,9 +96,11 @@ class Command(BaseCommand):
             return int(match.group(1)) if match else None
 
         with sync_playwright() as pw:
+            self.stdout.write("[1/6] Запускаю браузер Playwright (Chromium)...")
             browser = pw.chromium.launch(headless=not headed)
             executor = concurrent.futures.ThreadPoolExecutor()
 
+            self.stdout.write("[2/6] Создаю контекст браузера...")
             context = browser.new_context()
             if auth_store_json:
                 context.add_init_script(f"""
@@ -109,65 +112,68 @@ class Command(BaseCommand):
             page = context.new_page()
 
             url = ACTIVITY_URL_TPL.format(activity_id=activity_id)
-            self.stdout.write(f"Открываю страницу: {url}")
+            self.stdout.write(f"[3/6] Открываю страницу: {url}")
             try:
-                page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                page.goto(url, wait_until="networkidle", timeout=30000)
+                self.stdout.write(self.style.SUCCESS("  [OK] Страница загружена (networkidle)"))
             except Exception as e:
-                self.stderr.write(self.style.ERROR(f"Не удалось загрузить страницу: {e}"))
-                context.close()
-                browser.close()
+                self.stderr.write(self.style.ERROR(f"  [ОШИБКА] Не удалось загрузить страницу: {e}"))
                 return
 
-            container_selector = ".q-card.no-shadow.no-border.no-border-radius"
+            self.stdout.write("[4/6] Ожидаю появления родительского контейнера со списком студентов...")
             try:
-                container = page.wait_for_selector(container_selector, timeout=8000)
-                if not container:
-                    raise Exception("Контейнер не найден")
+                page.wait_for_selector(
+                    ".students-list-block-component .q-scrollarea__container, .q-page-container",
+                    timeout=15000,
+                )
+                self.stdout.write(self.style.SUCCESS("  [OK] Контейнер найден"))
             except Exception as e:
-                self.stderr.write(self.style.ERROR(f"Не найден div с классом '{container_selector}': {e}"))
-                context.close()
-                browser.close()
+                self.stderr.write(self.style.ERROR(
+                    f"  [ОШИБКА] Не дождался родительского контейнера: {e}"
+                ))
                 return
 
-            # Ищем скроллируемый элемент внутри контейнера: q-scrollarea students-list-block-component
-            scrollable_selector = ".q-scrollarea__container.scroll.relative-position.fit.hide-scrollbar"
-            scrollable = page.query_selector(scrollable_selector)
+            page.wait_for_timeout(5000)
+            input("waiting...")
+            self.stdout.write("[5/6] Ищу скроллируемый контейнер .students-list-block-component .q-scrollarea__container...")
+            scrollable = page.query_selector(".students-list-block-component .q-scrollarea__container")
             if not scrollable:
-                self.stderr.write(self.style.WARNING(f"Не найден элемент '{scrollable_selector}', пробуем найти любой скроллируемый потомок"))
-                # Поищем элемент с прокруткой
-                scrollable = page.evaluate_handle("""
-                    (container) => {
-                        const scrollables = container.querySelectorAll('.q-scrollarea, .students-list-block-component, [style*="overflow"]');
-                        for (let el of scrollables) {
-                            const style = window.getComputedStyle(el);
-                            if (style.overflowY === 'auto' || style.overflowY === 'scroll') {
-                                return el;
-                            }
-                        }
-                        // Если нет, попробуем сам container
-                        if (container.scrollHeight > container.clientHeight) return container;
-                        return null;
-                    }
-                """, container)
-                if scrollable:
-                    scrollable = scrollable.as_element()
-                else:
-                    scrollable = container
-
-            if not scrollable:
-                self.stderr.write(self.style.ERROR("Не удалось найти скроллируемый элемент для прокрутки списка студентов."))
-                context.close()
-                browser.close()
+                self.stderr.write(self.style.ERROR(
+                    "Не найден контейнер .students-list-block-component .q-scrollarea__container"
+                ))
                 return
 
-            self.stdout.write("Прокручиваю список студентов для подгрузки всех...")
-            print(scrollable)
-            for scroll_step in range(3):
-                # Прокручиваем найденный элемент до низа
-                scrollable.evaluate("el => el.scrollTop = el.scrollHeight", scrollable)
-                time.sleep(2)
-                self.stdout.write(f"  Прокрутка {scroll_step+1}/3 выполнена")
-                page.wait_for_timeout(500)
+            # Прокрутка до низу с проверкой роста scrollHeight
+            self.stdout.write("[6/6] Прокручиваю список студентов до стабилизации scrollHeight...")
+
+            for iteration in range(1, 31):
+                prev_height = scrollable.evaluate("el => el.scrollHeight")
+
+                page.evaluate("""
+                    document.querySelector('.students-list-block-component .q-scrollarea__container')
+                        .scrollTop = document.querySelector('.students-list-block-component .q-scrollarea__container')
+                        .scrollHeight
+                """)
+
+                page.wait_for_timeout(800)
+                new_height = scrollable.evaluate("el => el.scrollHeight")
+
+                self.stdout.write(
+                    f"  Итерация {iteration}: scrollHeight {prev_height} → {new_height}"
+                )
+
+                if new_height == prev_height:
+                    self.stdout.write(self.style.SUCCESS(f"  scrollHeight стабилен ({new_height}px) — все строки загружены"))
+                    break
+            else:
+                self.stdout.write(self.style.WARNING("  Достигнут лимит итераций (30), но scrollHeight всё ещё растёт."))
+
+            self.stdout.write("[6/6] Ищу карточки студентов (.q-card)...")
+            # После прокрутки ждём появления карточек студентов
+            container = page.wait_for_selector(
+                ".q-card.no-shadow.no-border.no-border-radius",
+                timeout=10000,
+            )
 
             # Получаем все строки студентов после прокрутки
             student_rows = container.query_selector_all(
@@ -178,8 +184,6 @@ class Command(BaseCommand):
                 student_rows = container.query_selector_all(".student-list-item-component")
             if not student_rows:
                 self.stderr.write(self.style.ERROR("Не найдены строки студентов внутри контейнера."))
-                context.close()
-                browser.close()
                 return
 
             self.stdout.write(f"Найдено строк студентов на странице: {len(student_rows)}")
@@ -217,8 +221,6 @@ class Command(BaseCommand):
                     start_index = 0
                 except Exception as e:
                     self.stderr.write(self.style.ERROR(f"Не удалось открыть первого студента: {e}"))
-                    context.close()
-                    browser.close()
                     return
 
             for idx in range(start_index, len(student_rows)):
@@ -316,17 +318,21 @@ class Command(BaseCommand):
                     msg = "Взято из кэша (файл уже существует на диске)"
                     cache_count += 1
                 else:
-                    Path(tmp_path).rename(final_path)
+                    shutil.move(tmp_path, final_path)
                     local_path = str(final_path)
                     msg = "Сохранено как новый файл"
                     ok_count += 1
 
+                solution_url = (
+                    f"https://www.odin.study/ru/ActivitySolution/Index/{activity_id}"
+                    f"?studentId={current_student.id}&userName="
+                )
                 executor.submit(
-                    lambda sid=current_student.id, act=act, fhash=file_hash, lpath=local_path:
+                    lambda sid=current_student.id, act=act, fhash=file_hash, lpath=local_path, surl=solution_url:
                     StudentWork.objects.update_or_create(
                         student_id=sid,
                         activity=act,
-                        defaults={"file_hash": fhash, "local_path": lpath},
+                        defaults={"file_hash": fhash, "local_path": lpath, "solution_url": surl},
                     )
                 ).result()
                 self.stdout.write(f"  -> [Успех] {msg}. Хэш: {file_hash[:16]}…")

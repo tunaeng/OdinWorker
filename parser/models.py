@@ -158,6 +158,9 @@ class StudentWork(models.Model):
     )
     file_hash = models.CharField(max_length=64, verbose_name="SHA-256 хэш файла")
     local_path = models.CharField(max_length=1024, verbose_name="Путь к файлу на диске")
+    solution_url = models.URLField(
+        max_length=2048, verbose_name="Ссылка на страницу решения", null=True, blank=True
+    )
     parsed_at = models.DateTimeField(
         default=timezone.now, verbose_name="Дата загрузки"
     )
