@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Odin Worker</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f5f5f5; height: 100vh; }
+        .header { background: #2c3e50; color: #fff; padding: 14px 24px; display: flex; align-items: center; gap: 16px; }
+        .header h1 { font-size: 18px; font-weight: 600; }
+        .header a { margin-left: auto; }
+        .layout { display: flex; height: calc(100vh - 52px); }
+        .sidebar { width: 380px; min-width: 380px; padding: 20px; overflow-y: auto; border-right: 1px solid #ddd; background: #fff; }
+        .main { flex: 1; padding: 0; background: #1e1e1e; display: flex; flex-direction: column; }
+        .card { margin-bottom: 20px; }
+        .card h2 { font-size: 15px; color: #333; margin-bottom: 4px; }
+        .card p { font-size: 13px; color: #888; margin-bottom: 12px; }
+        label { display: block; margin: 10px 0 4px; font-weight: 600; font-size: 13px; color: #555; }
+        input[type="text"], input[type="number"] { width: 100%; padding: 8px 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; }
+        input:focus { border-color: #4a90d9; outline: none; box-shadow: 0 0 0 2px rgba(74,144,217,.2); }
+        .help { font-size: 11px; color: #999; margin-top: 2px; }
+        button { margin-top: 12px; padding: 8px 18px; border: none; border-radius: 4px; font-size: 13px; font-weight: 600; cursor: pointer; }
+        button:disabled { opacity: .5; cursor: not-allowed; }
+        .btn-admin { display: inline-block; padding: 8px 18px; border: none; border-radius: 4px; font-size: 13px; font-weight: 600; cursor: pointer; text-decoration: none; background: #525559; color: #fff; }
+        .btn-admin:hover { background: #63686e; }
+        .btn-parse { background: #4a90d9; color: #fff; }
+        .btn-parse:hover:not(:disabled) { background: #357abd; }
+        .btn-download { background: #e67e22; color: #fff; }
+        .btn-download:hover:not(:disabled) { background: #d35400; }
+        .console-header { padding: 10px 20px; background: #252526; color: #969696; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; border-bottom: 1px solid #333; display: flex; align-items: center; gap: 12px; }
+        .console-header .status { font-size: 11px; text-transform: none; letter-spacing: 0; color: #6a9955; display: none; }
+        .console-header .status.running { display: inline; color: #e6db74; }
+        .console-header .status.done { display: inline; color: #6a9955; }
+        .console-header .status.error { display: inline; color: #f44747; }
+        .console { flex: 1; padding: 16px 20px; font-family: "Cascadia Code", "Fira Code", "JetBrains Mono", monospace; font-size: 13px; line-height: 1.5; color: #d4d4d4; white-space: pre-wrap; overflow-y: auto; }
+        .console:empty::before { content: "Лог будет выведен здесь после запуска команды."; color: #555; font-style: italic; }
+        hr { border: none; border-top: 1px solid #eee; margin: 16px 0; }
+        .spinner { display: none; width: 14px; height: 14px; border: 2px solid #555; border-top-color: #d4d4d4; border-radius: 50%; animation: spin .8s linear infinite; }
+        .spinner.active { display: inline-block; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+<div class="header">
+    <h1>Odin Worker</h1>
+    <a class="btn-admin" href="{% url 'admin:index' %}">Панель администратора</a>
+</div>
+<div class="layout">
+    <div class="sidebar">
+        <div class="card">
+            <h2>Парсинг структуры</h2>
+            <p>Университет → Дивизион → Программа → Поток → Группа → Дисциплина → Студент</p>
+            <form class="cmd-form" data-action="parse_structure">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="parse_structure">
+                <label for="university_ids">ID университетов</label>
+                <input type="text" id="university_ids" name="university_ids" placeholder="1" value="1">
+                <div class="help">Несколько ID через пробел: 1 2 3</div>
+                <button type="submit" class="btn-parse">Запустить парсинг</button>
+            </form>
+        </div>
+        <hr>
+        <div class="card">
+            <h2>Выгрузка работ</h2>
+            <p>Скачивает прикреплённые файлы через Playwright</p>
+            <form class="cmd-form" data-action="download_works">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="download_works">
+                <label for="activity_id">ID активности</label>
+                <input type="number" id="activity_id" name="activity_id" placeholder="2191122">
+                <label for="group_id">ID группы</label>
+                <input type="number" id="group_id" name="group_id" placeholder="60435">
+                <button type="submit" class="btn-download">Запустить выгрузку</button>
+            </form>
+        </div>
+    </div>
+    <div class="main">
+        <div class="console-header">
+            <span class="spinner" id="spinner"></span>
+            <span>Консоль</span>
+            <span class="status" id="status"></span>
+        </div>
+        <div class="console" id="console"></div>
+    </div>
+</div>
+
+<script>
+    const consoleEl = document.getElementById("console");
+    const statusEl = document.getElementById("status");
+    const spinnerEl = document.getElementById("spinner");
+
+    for (const form of document.querySelectorAll(".cmd-form")) {
+        form.addEventListener("submit", async (e) => {
+            e.preventDefault();
+
+            consoleEl.textContent = "";
+            statusEl.className = "status running";
+            statusEl.textContent = "Выполняется…";
+            spinnerEl.classList.add("active");
+
+            for (const btn of document.querySelectorAll(".cmd-form button")) {
+                btn.disabled = true;
+            }
+
+            const fd = new FormData(form);
+            fd.set("csrfmiddlewaretoken", document.querySelector("[name=csrfmiddlewaretoken]").value);
+
+            try {
+                const resp = await fetch("/run/", { method: "POST", body: fd });
+                const reader = resp.body.getReader();
+                const decoder = new TextDecoder();
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    consoleEl.textContent += decoder.decode(value, { stream: true });
+                    consoleEl.scrollTop = consoleEl.scrollHeight;
+                }
+
+                statusEl.className = "status done";
+                statusEl.textContent = "Завершено";
+            } catch (err) {
+                consoleEl.textContent += "\n[ОШИБКА] " + err.message;
+                statusEl.className = "status error";
+                statusEl.textContent = "Ошибка";
+            } finally {
+                spinnerEl.classList.remove("active");
+                for (const btn of document.querySelectorAll(".cmd-form button")) {
+                    btn.disabled = false;
+                }
+            }
+        });
+    }
+</script>
+</body>
+</html>
