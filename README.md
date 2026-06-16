@@ -1,116 +1,110 @@
 # OdinWorker
 
-Парсер данных из LMS Odin по REST API с сохранением в PostgreSQL и веб-админкой на Django.
+Парсинг данных из LMS Odin по REST API в PostgreSQL с веб-интерфейсом,
+админкой и выгрузкой работ студентов через headless-браузер (Playwright).
 
-## Описание
-
-Воркер последовательно обходит иерархию сущностей Odin:
-
-```
-University → Division → EducationalProgram → Cohort → Discipline + Group
-                                                          ↓
-                                                      Activity
-```
-
-Каждая сущность сохраняется в отдельную таблицу PostgreSQL через `update_or_create`
-(идемпотентность — повторный запуск не создаёт дубликатов).
-
-## Локальное развёртывание
-
-### Ubuntu Linux
+## Быстрый старт
 
 ```bash
-# Клонировать репозиторий
 git clone https://github.com/Zhidkov-Nikita/OdinWorker.git && cd OdinWorker
-
-# Создать и активировать виртуальное окружение
 python3 -m venv venv
-source venv/bin/activate
-
-# Установить зависимости
+source venv/bin/activate          # Linux
+# venv\Scripts\activate           # Windows
 pip install -r requirements.txt
-
-# Настроить токен доступа к API
-cp .env.example .env
-# Отредактировать .env — указать ODIN_BEARER_TOKEN
-```
-
-### Windows 10
-
-```powershell
-# Клонировать репозиторий
-git clone https://github.com/Zhidkov-Nikita/OdinWorker.git && cd OdinWorker
-
-# Создать и активировать виртуальное окружение
-python -m venv venv
-venv\Scripts\activate
-
-# Установить зависимости
-pip install -r requirements.txt
-
-# Настроить токен доступа к API
-copy .env.example .env
-# Отредактировать .env — указать ODIN_BEARER_TOKEN
-```
-
-## Инициализация базы данных
-
-```bash
-# Применить миграции
-python manage.py makemigrations
+cp .env.example .env              # отредактировать — указать токены
+playwright install chromium       # только для выгрузки работ
 python manage.py migrate
-
-# Создать суперпользователя для доступа в админку
 python manage.py createsuperuser
+python manage.py runserver
 ```
 
-Админка будет доступна по адресу `http://127.0.0.1:8000/admin/`.
+## Переменные окружения (`.env`)
 
-## Запуск парсера
+| Переменная | Обязательна | Назначение |
+|---|---|---|
+| `ODIN_BEARER_TOKEN` | для API | Bearer-токен для REST-запросов к Odin |
+| `ODIN_AUTHORIZATIONSTORE` | для браузера | JSON с jwtToken для авторизации в SPA |
+
+Один из двух токенов обязателен для выгрузки работ (Playwright), для парсинга
+структуры достаточно `ODIN_BEARER_TOKEN`.
+
+## Веб-интерфейс (`/`)
+
+Стартовая страница доступна после входа в админку (`/admin/`).
+
+**Левая панель — формы запуска:**
+- **Парсинг структуры** — указывается один или несколько ID университетов
+  через пробел (по умолчанию `1`).
+- **Выгрузка работ** — указывается ID активности и ID группы.
+
+**Правая панель — консоль:** все логи выполнения команды выводятся в реальном
+времени через `StreamingHttpResponse`.
+
+## Как найти нужные ID в админке
+
+### Университет
+1. Зайти в `/admin/parser/university/`
+2. Открыть свой университет — `id` виден в заголовке строки таблицы.
+
+### Группа
+1. Зайти в `/admin/parser/cohort/`, открыть нужный поток.
+2. Внизу отобразятся inline-группы — `id` в первой колонке.
+3. Либо сразу `/admin/parser/group/` — таблица со всеми группами.
+
+### Активность (для выгрузки работ)
+1. Зайти в `/admin/parser/activity/`.
+2. Колонка `id` — это ID активности, он же первый аргумент
+   команды `download_activity_works`.
+
+**Сквозная навигация:** от университета можно провалиться в дивизионы →
+программы → потоки → группы и дисциплины через inline-таблицы в админке.
+
+## Команды
+
+### Парсинг структуры
 
 ```bash
-# ID университетов передаются через пробел
-python manage.py parse_odin id
+python manage.py parse_odin_structure <university_id>
 ```
 
-Пример вывода в терминале:
+Обходит иерархию:
 
 ```
-[+] Университет ID=id ("Союз Энергетиков Поволжья")
-  -> Институт ID=4091 ("Программы по СЗ ТГУ")
-    => Программа ID=21236 ("Инструменты искусственного интеллекта...")
-      * Поток ID=82356 ("Поток 2")
-          Групп: 3
-          - Дисциплина ID=179268 ("Навигатор"): 12 активностей
-  -> Институт ID=3601 ("БАС. Силовые ведомства")
-    ...
-[✔] Парсинг успешно завершён!
---- СУММАРНАЯ СТАТИСТИКА ---
-Университетов: 1 | Институтов: 4 | Программ: 18 | Потоков: 42 | Групп: 12 | Дисциплин: 96 | Активностей: 245
+University → Division → EducationalProgram → Cohort → Group → Discipline → Activity
 ```
 
-## Архитектура парсера
+### Выгрузка работ студентов
 
-Парсер реализован в виде management-команды `parse_odin`. Логика обхода:
+```bash
+python manage.py download_activity_works <activity_id> <group_id>
+```
 
-1. **University** — `GET /api/University/Info?id=...`
-2. **Division** — ID из поля `divisions` ответа университета,
-   `GET /api/Division/Info?id=...`
-3. **EducationalProgram** — ID из `educationalPrograms` дивизиона,
-   `GET /api/EducationalProgram/Info?id=...`
-4. **Cohort** — ID из `cohorts` программы,
-   `GET /api/Cohort/Info?id=...`
-5. **Group** — сохраняется из поля `groups` ответа потока (без доп. запроса)
-6. **Discipline + Activity** — дисциплины из `disciplines` потока;
-   активности запрашиваются через `GET /api/Discipline/GetDisciplineActivities?disciplineId=...`
-   и собираются из `moduleList[].activities` и `moduleList[].themes[].activities`.
+Что делает:
+1. Открывает страницу активности в Chromium (headless).
+2. Прокручивает виртуальный список Quasar до стабилизации `scrollHeight`.
+3. Кликает по каждому студенту, ищет кнопку скачивания (SVG-иконка).
+4. Скачивает файл, вычисляет SHA-256, сохраняет в БД путь до файла.
 
-### Обработка ошибок
+Условие повторного скачивания: если файл с таким хэшем уже есть — пропускается
+(кэширование по SHA-256). Если студент не прикрепил работу — пропускается.
 
-- При HTTP-ошибках, таймаутах и сетевых сбоях парсер логирует проблему через
-  `logger.error` и продолжает со следующей сущностью.
-- Ответы API проверяются на `isSuccess == true` и `status_code == 200`.
-- Токен авторизации читается из `ODIN_BEARER_TOKEN` (файл `.env`).
+## Хранение работ студентов
+
+Файлы сохраняются в директорию:
+
+```
+media/solutions/<sha256>.ext
+```
+
+Пример: `media/solutions/0a4ce555b1fe9665eb53fad343731238064d368628f33c471e809f022d022afc.docx`
+
+В базе данных (таблица `StudentWork`) хранятся:
+- `student_id` — ID студента
+- `activity` — FK на активность
+- `file_hash` — SHA-256
+- `local_path` — путь к файлу
+- `solution_url` — полная ссылка на страницу решения
+- `parsed_at` — дата загрузки
 
 ## Модели данных
 
@@ -123,16 +117,13 @@ python manage.py parse_odin id
 | **Group** | id, title, students_number | FK → Cohort |
 | **Discipline** | id, name | FK → Cohort |
 | **Activity** | id, name, type, type_id, start/end_date, duration | FK → Discipline |
+| **Student** | id, first_name, last_name, middle_name | FK → Group |
+| **StudentWork** | student_id, activity, file_hash, local_path, solution_url, parsed_at | — |
 
-Все связи — `ForeignKey` с каскадным удалением (`CASCADE`).
+## Playwright
 
-## Django Admin
+Для выгрузки работ требуется установить Chromium:
 
-После запуска сервера (`python manage.py runserver`) и создания суперпользователя
-админка доступна по `/admin/`. Реализована сквозная навигация:
-
-- Университет → встроенный список институтов
-- Институт → встроенный список программ
-- Программа → встроенный список потоков
-- Поток → встроенные группы и дисциплины
-- Дисциплина → просмотр активностей (с фильтром по типу и дате)
+```bash
+playwright install chromium
+```
