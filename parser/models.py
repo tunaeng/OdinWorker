@@ -172,3 +172,22 @@ class StudentWork(models.Model):
 
     def __str__(self):
         return f"Student {self.student_id} / Activity {self.activity_id}"
+
+
+class LecturePresentation(models.Model):
+    activity = models.ForeignKey(
+        Activity, on_delete=models.CASCADE,
+        related_name='presentations', verbose_name="Активность"
+    )
+    file_path = models.TextField(verbose_name="Путь из API")
+    local_path = models.CharField(max_length=1024, verbose_name="Путь на диске")
+    file_hash = models.CharField(max_length=64, verbose_name="SHA-256 хэш файла")
+    parsed_at = models.DateTimeField(auto_now_add=True, verbose_name="Дата загрузки")
+
+    class Meta:
+        verbose_name = "Презентация лекции"
+        verbose_name_plural = "Презентации лекций"
+        unique_together = ("activity", "file_hash")
+
+    def __str__(self):
+        return f"Lecture {self.activity_id} / {self.local_path.split('/')[-1]}"

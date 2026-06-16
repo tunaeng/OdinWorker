@@ -7,6 +7,7 @@ from parser.models import (
     Division,
     EducationalProgram,
     Group,
+    LecturePresentation,
     Student,
     StudentWork,
     University,
@@ -206,3 +207,27 @@ class StudentWorkAdmin(admin.ModelAdmin):
     @admin.display(description="SHA-256")
     def file_hash_short(self, obj):
         return obj.file_hash[:16] + "…" if obj.file_hash else "—"
+
+
+# ---------------------------------------------------------------------------
+# LecturePresentation
+# ---------------------------------------------------------------------------
+
+@admin.register(LecturePresentation)
+class LecturePresentationAdmin(admin.ModelAdmin):
+    list_display = ("activity", "file_path_short", "file_hash_short", "parsed_at")
+    list_filter = ("parsed_at",)
+    search_fields = ("file_path",)
+
+    @admin.display(description="Путь из API")
+    def file_path_short(self, obj):
+        return obj.file_path[:60] + "…" if obj.file_path else "—"
+
+    @admin.display(description="SHA-256")
+    def file_hash_short(self, obj):
+        return obj.file_hash[:16] + "…" if obj.file_hash else "—"
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related(
+            "activity__discipline__cohort__educational_program__division__university",
+        )

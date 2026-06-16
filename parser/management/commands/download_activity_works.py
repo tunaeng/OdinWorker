@@ -19,8 +19,9 @@ import time
 from django.core.management.base import BaseCommand
 from playwright.sync_api import sync_playwright, TimeoutError as PwTimeout
 
-from parser.models import Activity, Group, Student, StudentWork
+from parser.models import Activity, Group, LecturePresentation, Student, StudentWork
 from parser.solutions import SOLUTIONS_DIR, _ensure_solutions_dir
+from parser.lections import _fetch_lecture_paths, _download_and_save
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +81,58 @@ class Command(BaseCommand):
             f'[+] Активность ID={activity_id} ("{act.name or "—"}") | '
             f'Группа ID={group_id} ("{group.title or "—"}") | '
             f'Студентов в БД: {len(students_info)}'
+        )
+
+        # --- Скачивание презентаций лекций ---
+        self.stdout.write("\n[*] Проверяю лекции для скачивания презентаций...")
+        lectures = Activity.objects.filter(
+            name=act.name,
+            discipline__cohort=act.discipline.cohort,
+            type="Лекция",
+            type_id=1,
+        )
+        lec_ok = 0
+        lec_cache = 0
+        lec_skip = 0
+        for lecture in lectures:
+            if LecturePresentation.objects.filter(activity=lecture).exists():
+                self.stdout.write(f"  -> [Кэш] Лекция ID={lecture.id} — уже скачана")
+                lec_cache += 1
+                continue
+            self.stdout.write(f"  -> [Лекция] ID={lecture.id} ({lecture.name or '—'}) — запрашиваю контент...")
+            try:
+                paths = _fetch_lecture_paths(bearer_token, lecture.id)
+            except Exception as e:
+                self.stdout.write(f"  -> [Ошибка] Не удалось получить контент лекции {lecture.id}: {e}")
+                lec_skip += 1
+                continue
+            if not paths:
+                self.stdout.write(f"  -> [Пусто] У лекции {lecture.id} нет файлов")
+                lec_skip += 1
+                continue
+            for url in paths:
+                try:
+                    result = _download_and_save(bearer_token, url)
+                except Exception as e:
+                    self.stdout.write(f"  -> [Ошибка] Скачивание {url}: {e}")
+                    lec_skip += 1
+                    continue
+                if not result:
+                    lec_skip += 1
+                    continue
+                file_hash, local_path = result
+                LecturePresentation.objects.update_or_create(
+                    activity=lecture,
+                    file_hash=file_hash,
+                    defaults={"file_path": url, "local_path": local_path},
+                )
+                self.stdout.write(f"  -> [OK] {Path(local_path).name} (хэш: {file_hash[:16]}…)")
+                lec_ok += 1
+
+        self.stdout.write(
+            self.style.SUCCESS(
+                f"[*] Презентации: скачано {lec_ok}, из кэша {lec_cache}, ошибки {lec_skip}"
+            )
         )
 
         _ensure_solutions_dir()
