@@ -182,6 +182,7 @@ class LecturePresentation(models.Model):
     file_path = models.TextField(verbose_name="Путь из API")
     local_path = models.CharField(max_length=1024, verbose_name="Путь на диске")
     file_hash = models.CharField(max_length=64, verbose_name="SHA-256 хэш файла")
+    task = models.TextField(verbose_name="Текст задания (последний слайд)", null=True, blank=True)
     parsed_at = models.DateTimeField(auto_now_add=True, verbose_name="Дата загрузки")
 
     class Meta:

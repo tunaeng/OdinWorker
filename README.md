@@ -36,6 +36,8 @@ python manage.py runserver
 - **Парсинг структуры** — указывается один или несколько ID университетов
   через пробел (по умолчанию `1`).
 - **Выгрузка работ** — указывается ID активности и ID группы.
+- **Извлечение заданий из .pptx** — парсит презентации, извлекает текст
+  с последнего слайда.
 
 **Правая панель — консоль:** все логи выполнения команды выводятся в реальном
 времени через `StreamingHttpResponse`.
@@ -84,9 +86,23 @@ python manage.py download_activity_works <activity_id> <group_id>
 2. Прокручивает виртуальный список Quasar до стабилизации `scrollHeight`.
 3. Кликает по каждому студенту, ищет кнопку скачивания (SVG-иконка).
 4. Скачивает файл, вычисляет SHA-256, сохраняет в БД путь до файла.
+5. Ищет лекцию с таким же именем в том же потоке — скачивает презентации
+   через REST API (`Activity/Contents`).
 
 Условие повторного скачивания: если файл с таким хэшем уже есть — пропускается
 (кэширование по SHA-256). Если студент не прикрепил работу — пропускается.
+
+### Извлечение заданий из .pptx
+
+```bash
+python manage.py extract_pptx_tasks
+```
+
+Что делает:
+1. Берёт все записи `LecturePresentation` из БД.
+2. Парсит `.pptx` как zip-архив (стандартная библиотека `zipfile` + `re`).
+3. Извлекает текст из тегов `<a:t>` последнего слайда.
+4. Сохраняет текст в поле `task`.
 
 ## Хранение работ студентов
 
@@ -96,14 +112,28 @@ python manage.py download_activity_works <activity_id> <group_id>
 media/solutions/<sha256>.ext
 ```
 
-Пример: `media/solutions/0a4ce555b1fe9665eb53fad343731238064d368628f33c471e809f022d022afc.docx`
-
 В базе данных (таблица `StudentWork`) хранятся:
 - `student_id` — ID студента
 - `activity` — FK на активность
 - `file_hash` — SHA-256
 - `local_path` — путь к файлу
 - `solution_url` — полная ссылка на страницу решения
+- `parsed_at` — дата загрузки
+
+## Хранение презентаций лекций
+
+Файлы сохраняются в директорию:
+
+```
+media/lections/<sha256>.ext
+```
+
+В базе данных (таблица `LecturePresentation`) хранятся:
+- `activity` — FK на активность
+- `file_path` — URL из API
+- `local_path` — путь к файлу на диске
+- `file_hash` — SHA-256
+- `task` — текст задания с последнего слайда .pptx
 - `parsed_at` — дата загрузки
 
 ## Модели данных
@@ -119,6 +149,7 @@ media/solutions/<sha256>.ext
 | **Activity** | id, name, type, type_id, start/end_date, duration | FK → Discipline |
 | **Student** | id, first_name, last_name, middle_name | FK → Group |
 | **StudentWork** | student_id, activity, file_hash, local_path, solution_url, parsed_at | — |
+| **LecturePresentation** | activity, file_path, local_path, file_hash, task, parsed_at | FK → Activity |
 
 ## Playwright
 

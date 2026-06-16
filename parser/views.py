@@ -41,6 +41,8 @@ def _run_in_thread(action: str, post_data: dict, q: queue.Queue) -> None:
                 str(activity_id), str(group_id),
                 stdout=writer,
             )
+        elif action == "extract_pptx_tasks":
+            call_command("extract_pptx_tasks", stdout=writer)
     except Exception as e:
         writer.write(f"\n[ОШИБКА] {e}\n")
     finally:
@@ -53,7 +55,7 @@ def run(request):
         return render(request, "parser/index.html")
 
     action = request.POST.get("action")
-    if action not in ("parse_structure", "download_works"):
+    if action not in ("parse_structure", "download_works", "extract_pptx_tasks"):
         return render(request, "parser/index.html")
 
     q: queue.Queue = queue.Queue()

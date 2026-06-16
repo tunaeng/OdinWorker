@@ -28,6 +28,8 @@
         .btn-parse:hover:not(:disabled) { background: #357abd; }
         .btn-download { background: #e67e22; color: #fff; }
         .btn-download:hover:not(:disabled) { background: #d35400; }
+        .btn-extract { background: #8e44ad; color: #fff; }
+        .btn-extract:hover:not(:disabled) { background: #6c3483; }
         .console-header { padding: 10px 20px; background: #252526; color: #969696; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; border-bottom: 1px solid #333; display: flex; align-items: center; gap: 12px; }
         .console-header .status { font-size: 11px; text-transform: none; letter-spacing: 0; color: #6a9955; display: none; }
         .console-header .status.running { display: inline; color: #e6db74; }
@@ -72,6 +74,16 @@
                 <label for="group_id">ID группы</label>
                 <input type="number" id="group_id" name="group_id" placeholder="60435">
                 <button type="submit" class="btn-download">Запустить выгрузку</button>
+            </form>
+        </div>
+        <hr>
+        <div class="card">
+            <h2>Извлечение заданий из .pptx</h2>
+            <p>Парсит презентации, извлекает текст с последнего слайда</p>
+            <form class="cmd-form" data-action="extract_pptx_tasks">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="extract_pptx_tasks">
+                <button type="submit" class="btn-extract">Запустить извлечение</button>
             </form>
         </div>
     </div>
