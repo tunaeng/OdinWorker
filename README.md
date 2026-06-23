@@ -38,6 +38,8 @@ python manage.py runserver
 - **Выгрузка работ** — указывается ID активности и ID группы.
 - **Извлечение заданий из .pptx** — парсит презентации, извлекает текст
   с последнего слайда.
+- **Выставление оценок** — загружает CSV-файл (studentId, markValue)
+  и отправляет оценки через REST API.
 
 **Правая панель — консоль:** все логи выполнения команды выводятся в реальном
 времени через `StreamingHttpResponse`.
@@ -53,10 +55,10 @@ python manage.py runserver
 2. Внизу отобразятся inline-группы — `id` в первой колонке.
 3. Либо сразу `/admin/parser/group/` — таблица со всеми группами.
 
-### Активность (для выгрузки работ)
+### Активность (для выгрузки работ / выставления оценок)
 1. Зайти в `/admin/parser/activity/`.
 2. Колонка `id` — это ID активности, он же первый аргумент
-   команды `download_activity_works`.
+   команд `download_activity_works` и `set_marks_from_csv`.
 
 **Сквозная навигация:** от университета можно провалиться в дивизионы →
 программы → потоки → группы и дисциплины через inline-таблицы в админке.
@@ -103,6 +105,24 @@ python manage.py extract_pptx_tasks
 2. Парсит `.pptx` как zip-архив (стандартная библиотека `zipfile` + `re`).
 3. Извлекает текст из тегов `<a:t>` последнего слайда.
 4. Сохраняет текст в поле `task`.
+
+### Выставление оценок из CSV
+
+```bash
+python manage.py set_marks_from_csv <activity_id> <csv_path>
+```
+
+CSV-файл — два столбца: `studentId`, `markValue`. Что делает:
+1. Читает строки из CSV.
+2. Для каждой строки отправляет POST-запрос на `/api/Mark/SetMarkForTask`.
+3. Логирует HTTP-ответ для каждого студента.
+
+Формат CSV:
+```
+studentId,markValue
+12345,85
+12346,90
+```
 
 ## Хранение работ студентов
 
@@ -158,3 +178,12 @@ media/lections/<sha256>.ext
 ```bash
 playwright install chromium
 ```
+
+## Docker
+
+```bash
+docker compose up --build
+```
+
+Сервер будет доступен на `http://localhost:8000`. База данных PostgreSQL
+и директория `media/` (скачанные файлы) сохраняются в Docker volumes.
