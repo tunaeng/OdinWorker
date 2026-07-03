@@ -187,7 +187,6 @@ class Command(BaseCommand):
                 return
 
             page.wait_for_timeout(5000)
-            input("waiting...")
             self.stdout.write("[5/6] Ищу скроллируемый контейнер .students-list-block-component .q-scrollarea__container...")
             scrollable = page.query_selector(".students-list-block-component .q-scrollarea__container")
             if not scrollable:
