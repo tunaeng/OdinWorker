@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Дашборд — Odin Worker</title>
+  <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #f0f2f5; color: #1a1a2e; padding: 20px;
+    }
+    .container { max-width: 1200px; margin: 0 auto; }
+
+    /* header */
+    .header {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-bottom: 24px;
+    }
+    .header h1 { font-size: 24px; font-weight: 700; }
+    .header-links a {
+      color: #4a6cf7; text-decoration: none; margin-left: 16px;
+      font-size: 14px;
+    }
+    .header-links a:hover { text-decoration: underline; }
+    .status-badge {
+      display: inline-block; padding: 2px 10px; border-radius: 12px;
+      font-size: 12px; font-weight: 600; color: #fff;
+    }
+    .badge-running { background: #2196F3; }
+    .badge-success { background: #4CAF50; }
+    .badge-error { background: #f44336; }
+
+    /* summary cards */
+    .summary-row { display: flex; gap: 16px; margin-bottom: 24px; }
+    .summary-card {
+      flex: 1; background: #fff; border-radius: 12px; padding: 20px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    }
+    .summary-card .label { font-size: 13px; color: #666; margin-bottom: 8px; }
+    .summary-card .value { font-size: 28px; font-weight: 700; }
+    .summary-card .value.running { color: #2196F3; }
+    .summary-card .value.success { color: #4CAF50; }
+    .summary-card .value.error { color: #f44336; }
+
+    /* table */
+    .table-wrap {
+      background: #fff; border-radius: 12px; overflow: hidden;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    }
+    table { width: 100%; border-collapse: collapse; }
+    th {
+      text-align: left; padding: 12px 16px; font-size: 12px;
+      text-transform: uppercase; color: #666; background: #fafafa;
+      border-bottom: 2px solid #eef0f4;
+    }
+    td { padding: 12px 16px; font-size: 14px; border-bottom: 1px solid #eef0f4; }
+    tr:last-child td { border-bottom: none; }
+    .cmd-tag {
+      display: inline-block; padding: 2px 8px; border-radius: 4px;
+      font-size: 12px; font-weight: 600; color: #fff;
+    }
+    .cmd-parse_structure { background: #6b5b95; }
+    .cmd-download_works { background: #2e86ab; }
+    .cmd-extract_pptx { background: #a23b72; }
+    .cmd-set_marks { background: #f18f01; }
+    .cmd-scheduled_run { background: #4c9f70; }
+
+    .metrics { font-size: 13px; color: #333; }
+    .metrics .ok { color: #4CAF50; }
+    .metrics .cache { color: #FF9800; }
+    .metrics .skip, .metrics .errors { color: #f44336; }
+    .error-tip {
+      max-width: 300px; overflow: hidden; text-overflow: ellipsis;
+      white-space: nowrap; font-size: 13px; color: #f44336;
+    }
+    .duration { font-size: 13px; color: #666; }
+    .time { font-size: 13px; color: #666; }
+    .schedule-link { font-size: 13px; color: #4a6cf7; text-decoration: none; }
+    .schedule-link:hover { text-decoration: underline; }
+
+    /* live indicator */
+    .live-indicator {
+      display: flex; align-items: center; gap: 6px; font-size: 12px;
+      color: #4CAF50; margin-bottom: 12px;
+    }
+    .live-indicator .dot {
+      width: 8px; height: 8px; border-radius: 50%; background: #4CAF50;
+      animation: pulse 1.5s infinite;
+    }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+    /* loading */
+    .loading-overlay {
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(255,255,255,0.7); display: flex;
+      align-items: center; justify-content: center; z-index: 1000;
+      font-size: 18px;
+    }
+  </style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <h1>📊 Дашборд парсера</h1>
+    <div class="header-links">
+      <a href="{% url 'index' %}">Главная</a>
+      <a href="{% url 'admin:index' %}">Админка</a>
+    </div>
+  </div>
+
+  <!-- Summary cards -->
+  <div class="summary-row">
+    {% with counts=summary_counts %}
+    <div class="summary-card">
+      <div class="label">Сейчас выполняется</div>
+      <div class="value running">{{ counts.running|default:0 }}</div>
+    </div>
+    <div class="summary-card">
+      <div class="label">Успешно</div>
+      <div class="value success">{{ counts.success|default:0 }}</div>
+    </div>
+    <div class="summary-card">
+      <div class="label">С ошибками</div>
+      <div class="value error">{{ counts.error|default:0 }}</div>
+    </div>
+    <div class="summary-card">
+      <div class="label">За последний час</div>
+      <div class="value">{{ last_hour_count|default:0 }}</div>
+    </div>
+    {% endwith %}
+  </div>
+
+  <!-- Live table -->
+  <div class="live-indicator">
+    <span class="dot"></span> Обновляется каждые 5 сек
+  </div>
+
+  <div class="table-wrap" id="runs-table"
+       hx-get="{% url 'dashboard_partial' %}"
+       hx-trigger="every 5s"
+       hx-swap="outerHTML">
+    {% include "parser/_runs_table.html" %}
+  </div>
+</div>
+</body>
+</html>

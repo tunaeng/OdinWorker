@@ -6,22 +6,12 @@
 """
 
 import logging
-import subprocess
-import sys
-from pathlib import Path
 
 from django.core.management.base import BaseCommand
-from django.utils import timezone
 
-from scheduler.models import Schedule, ScheduleLog
+from scheduler.models import Schedule
 
 logger = logging.getLogger(__name__)
-
-LOGS_DIR = Path("media") / "schedule_logs"
-
-
-def ensure_logs_dir():
-    LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 class Command(BaseCommand):

@@ -5,15 +5,11 @@ from urllib.parse import urlparse
 
 import requests
 
+from parser.storage import upload_with_hash
+
 logger = logging.getLogger(__name__)
 
-LECTIONS_DIR = Path("media") / "lections"
 CONTENTS_URL = "https://odin.study/api/Activity/Contents"
-DOWNLOAD_CHUNK_SIZE = 8192
-
-
-def _ensure_lections_dir():
-    LECTIONS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _extract_extension(url: str) -> str:
@@ -56,9 +52,9 @@ def _fetch_lecture_paths(bearer_token: str, activity_id: int) -> list[str]:
 
 
 def _download_and_save(bearer_token: str, url: str) -> tuple[str, str] | None:
-    """Скачивать файл, вычислить SHA-256, сохранить на диск.
+    """Скачать файл, вычислить SHA-256, загрузить в S3.
 
-    Возвращает (file_hash, local_path) или None при ошибке.
+    Возвращает (file_hash, s3_key) или None при ошибке.
     """
     try:
         resp = requests.get(
@@ -73,26 +69,15 @@ def _download_and_save(bearer_token: str, url: str) -> tuple[str, str] | None:
         return None
 
     sha256 = hashlib.sha256()
-    for chunk in resp.iter_content(chunk_size=DOWNLOAD_CHUNK_SIZE):
+    chunks = []
+    for chunk in resp.iter_content(chunk_size=8192):
         if chunk:
             sha256.update(chunk)
+            chunks.append(chunk)
     file_hash = sha256.hexdigest()
+    content = b"".join(chunks)
 
     ext = _extract_extension(url)
-    _ensure_lections_dir()
-    local_path = LECTIONS_DIR / f"{file_hash}{ext}"
+    _, key = upload_with_hash("lections", ext, content)
 
-    if not local_path.exists():
-        resp2 = requests.get(
-            url,
-            headers={"Authorization": f"Bearer {bearer_token}"},
-            stream=True,
-            timeout=60,
-        )
-        resp2.raise_for_status()
-        with open(local_path, "wb") as f:
-            for chunk in resp2.iter_content(chunk_size=DOWNLOAD_CHUNK_SIZE):
-                if chunk:
-                    f.write(chunk)
-
-    return file_hash, str(local_path)
+    return file_hash, key

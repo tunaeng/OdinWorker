@@ -1,15 +1,10 @@
-"""
-Команда извлечения текста задания с последнего слайда .pptx презентаций.
-Читает записи LecturePresentation, парсит .pptx через zipfile+re,
-сохраняет текст в поле task.
-"""
-
 import logging
 
 from django.core.management.base import BaseCommand
 
 from parser.models import LecturePresentation
-from parser.pptx_utils import extract_last_slide_text
+from parser.pptx_utils import extract_last_slide_bytes
+from parser.storage import s3_read
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +40,8 @@ class Command(BaseCommand):
                 continue
 
             try:
-                text = extract_last_slide_text(pres.local_path)
+                data = s3_read(pres.local_path)
+                text = extract_last_slide_bytes(data)
             except Exception as e:
                 self.stdout.write(f"  -> [Ошибка] Парсинг не удался: {e}")
                 logger.exception("Ошибка парсинга %s", pres.local_path)

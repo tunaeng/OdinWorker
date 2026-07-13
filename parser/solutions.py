@@ -8,6 +8,7 @@ import requests
 from bs4 import BeautifulSoup
 
 from parser.models import Activity, StudentWork
+from parser.storage import upload_with_hash
 
 logger = logging.getLogger(__name__)
 
@@ -17,12 +18,6 @@ TARGET_SVG_D = (
 )
 
 SOLUTIONS_URL_TPL = "https://www.odin.study/ru/ActivitySolution/Index/{activity_id}"
-SOLUTIONS_DIR = Path("media") / "solutions"
-DOWNLOAD_CHUNK_SIZE = 8192
-
-
-def _ensure_solutions_dir():
-    SOLUTIONS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _extract_extension(response, url):
@@ -39,11 +34,6 @@ def _extract_extension(response, url):
 
 
 def download_student_work(session, activity_id, student_id):
-    """Скачать работу студента для заданной активности.
-
-    Возвращает кортеж (status, message):
-      ("ok", "Новый файл") / ("cache", "Из кэша") / ("skip", причина)
-    """
     act = Activity.objects.filter(id=activity_id).first()
     if not act:
         return "skip", f"Активность {activity_id} не найдена в БД"
@@ -90,15 +80,14 @@ def download_student_work(session, activity_id, student_id):
 
     sha256 = hashlib.sha256()
     chunks = []
-    for chunk in file_resp.iter_content(chunk_size=DOWNLOAD_CHUNK_SIZE):
+    for chunk in file_resp.iter_content(chunk_size=8192):
         if chunk:
             sha256.update(chunk)
             chunks.append(chunk)
     file_hash = sha256.hexdigest()
 
     ext = _extract_extension(file_resp, file_url)
-    _ensure_solutions_dir()
-    file_path = SOLUTIONS_DIR / f"{file_hash}{ext}"
+    content = b"".join(chunks)
 
     existing = StudentWork.objects.filter(file_hash=file_hash).first()
     if existing:
@@ -106,10 +95,8 @@ def download_student_work(session, activity_id, student_id):
         status = "cache"
         msg = "Из кэша"
     else:
-        with open(file_path, "wb") as f:
-            for chunk in chunks:
-                f.write(chunk)
-        local_path = str(file_path)
+        _, key = upload_with_hash("solutions", ext, content)
+        local_path = key
         status = "ok"
         msg = "Новый файл"
 

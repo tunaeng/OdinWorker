@@ -3,22 +3,30 @@ import os
 import queue
 import threading
 import tempfile
+from datetime import timedelta
 from pathlib import Path
 
 from django.contrib.admin.views.decorators import staff_member_required
 from django.core.management import call_command
+from django.db import models
 from django.http import StreamingHttpResponse
 from django.shortcuts import render
+from django.utils import timezone
+
+from parser.models import ParserRun
+from parser.run_tracker import ParserRunTracker
 
 logger = logging.getLogger(__name__)
 
 
 class _StreamWriter:
-    def __init__(self, q: queue.Queue):
+    def __init__(self, q: queue.Queue, tracker: ParserRunTracker):
         self._q = q
+        self._tracker = tracker
 
     def write(self, text: str) -> None:
         self._q.put(text)
+        self._tracker.write(text)
 
     def flush(self) -> None:
         pass
@@ -30,7 +38,9 @@ def index(request):
 
 
 def _run_in_thread(action: str, post_data: dict, q: queue.Queue) -> None:
-    writer = _StreamWriter(q)
+    tracker = ParserRunTracker(action)
+    writer = _StreamWriter(q, tracker)
+    writer.write(f"[ID {tracker.id}] Запуск: {tracker.run.get_command_display()}\n")
     try:
         if action == "parse_structure":
             raw = post_data.get("university_ids", "").strip()
@@ -55,7 +65,10 @@ def _run_in_thread(action: str, post_data: dict, q: queue.Queue) -> None:
                 stdout=writer,
             )
             Path(csv_path).unlink(missing_ok=True)
+        tracker.finish()
+        writer.write(f"\n[✔] Завершено за {tracker.run.duration_display}\n")
     except Exception as e:
+        tracker.finish(error=str(e))
         writer.write(f"\n[ОШИБКА] {e}\n")
     finally:
         q.put(None)
@@ -98,3 +111,28 @@ def run(request):
             yield chunk
 
     return StreamingHttpResponse(generate(), content_type="text/plain")
+
+
+@staff_member_required
+def dashboard(request):
+    last_runs = ParserRun.objects.select_related("schedule", "schedule_log")[:20]
+    summary_counts = {r["status"]: r["count"] for r in
+                      ParserRun.objects.values("status").annotate(
+                          count=models.Count("id")
+                      )}
+    last_hour_count = ParserRun.objects.filter(
+        started_at__gte=timezone.now() - timedelta(hours=1)
+    ).count()
+    return render(request, "parser/dashboard.html", {
+        "last_runs": last_runs,
+        "summary_counts": summary_counts,
+        "last_hour_count": last_hour_count,
+    })
+
+
+@staff_member_required
+def dashboard_partial(request):
+    last_runs = ParserRun.objects.select_related("schedule", "schedule_log")[:20]
+    return render(request, "parser/_runs_table.html", {
+        "last_runs": last_runs,
+    })

@@ -1,6 +1,6 @@
+import io
 import re
 import zipfile
-from pathlib import Path
 
 _SLIDE_PATTERN = re.compile(r'ppt/slides/slide(\d+)\.xml')
 _TEXT_PATTERN = re.compile(r'<a:t[^>]*>([\s\S]*?)</a:t>')
@@ -23,18 +23,9 @@ def decode_xml_entities(text: str) -> str:
     return text
 
 
-def extract_last_slide_text(file_path: str) -> str | None:
-    """Извлечь текст с последнего слайда .pptx.
-
-    Возвращает строку или None, если файл не является валидным .pptx
-    или не содержит слайдов.
-    """
-    path = Path(file_path)
-    if not path.exists():
-        return None
-
+def extract_last_slide_bytes(data: bytes) -> str | None:
     try:
-        with zipfile.ZipFile(path, "r") as zf:
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
             slide_files = []
             for name in zf.namelist():
                 match = _SLIDE_PATTERN.search(name)

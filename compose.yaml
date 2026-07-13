@@ -1,11 +1,26 @@
 services:
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    ports:
+      - 9000:9000
+      - 9001:9001
+    volumes:
+      - minio-data:/data
+    environment:
+      - MINIO_ROOT_USER=${AWS_ACCESS_KEY_ID:-minioadmin}
+      - MINIO_ROOT_PASSWORD=${AWS_SECRET_ACCESS_KEY:-minioadmin}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
   server:
     build:
       context: .
     ports:
       - 8000:8000
-    volumes:
-      - media-data:/app/media
     environment:
       - DB_NAME=${DB_NAME}
       - DB_USER=${DB_USER}
@@ -17,9 +32,24 @@ services:
       - DJANGO_SUPERUSER_USERNAME=${DJANGO_SUPERUSER_USERNAME}
       - DJANGO_SUPERUSER_EMAIL=${DJANGO_SUPERUSER_EMAIL}
       - DJANGO_SUPERUSER_PASSWORD=${DJANGO_SUPERUSER_PASSWORD}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-minioadmin}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-minioadmin}
+      - AWS_STORAGE_BUCKET_NAME=${AWS_STORAGE_BUCKET_NAME:-odin-worker}
+      - AWS_S3_ENDPOINT_URL=http://minio:9000
+      - AWS_S3_REGION_NAME=${AWS_S3_REGION_NAME:-us-east-1}
+      - AWS_S3_USE_SSL=false
     command: >
-      sh -c "python manage.py migrate &&
-             python manage.py runserver 0.0.0.0:8000"
+      sh -c "python -c \"
+        import boto3
+        c = boto3.client('s3',
+          endpoint_url='http://minio:9000',
+          aws_access_key_id='$AWS_ACCESS_KEY_ID',
+          aws_secret_access_key='$AWS_SECRET_ACCESS_KEY',
+          region_name='$AWS_S3_REGION_NAME')
+        c.create_bucket(Bucket='$AWS_STORAGE_BUCKET_NAME')
+      \" 2>/dev/null || true &&
+      python manage.py migrate &&
+      python manage.py runserver 0.0.0.0:8000"
     depends_on:
       db:
         condition: service_healthy
@@ -31,13 +61,17 @@ services:
     volumes:
       - db-data:/var/lib/postgresql/data
     environment:
-      - POSTGRES_DB=${DB_NAME}
-      - POSTGRES_USER=${DB_USER}
-      - POSTGRES_PASSWORD=${DB_PASSWORD}
+      - POSTGRES_DB=${DB_NAME:-odin_worker}
+      - POSTGRES_USER=${DB_USER:-odin}
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-odin}
     expose:
       - 5432
     healthcheck:
-      test: [ "CMD", "pg_isready", "-U", "${DB_USER}" ]
+      test: [ "CMD", "pg_isready", "-U", "${DB_USER:-odin}" ]
       interval: 10s
       timeout: 5s
       retries: 5
+
+volumes:
+  minio-data:
+  db-data:

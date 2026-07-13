@@ -192,3 +192,71 @@ class LecturePresentation(models.Model):
 
     def __str__(self):
         return f"Lecture {self.activity_id} / {self.local_path.split('/')[-1]}"
+
+
+class ParserRun(models.Model):
+    COMMAND_CHOICES = [
+        ("parse_structure", "Parse Structure"),
+        ("download_works", "Download Works"),
+        ("extract_pptx", "Extract PPTX Tasks"),
+        ("set_marks", "Set Marks"),
+        ("scheduled_run", "Scheduled Run"),
+    ]
+    STATUS_CHOICES = [
+        ("running", "Running"),
+        ("success", "Success"),
+        ("error", "Error"),
+    ]
+
+    command = models.CharField(
+        max_length=32, choices=COMMAND_CHOICES,
+        verbose_name="Команда",
+    )
+    status = models.CharField(
+        max_length=16, choices=STATUS_CHOICES,
+        default="running", verbose_name="Статус",
+        db_index=True,
+    )
+    started_at = models.DateTimeField(
+        auto_now_add=True, verbose_name="Время запуска",
+        db_index=True,
+    )
+    finished_at = models.DateTimeField(
+        null=True, blank=True, verbose_name="Время завершения",
+    )
+    duration = models.FloatField(
+        null=True, blank=True, verbose_name="Длительность (сек)",
+    )
+    metrics = models.JSONField(
+        default=dict, blank=True, verbose_name="Метрики",
+    )
+    error_message = models.TextField(
+        blank=True, default="", verbose_name="Сообщение об ошибке",
+    )
+    output_preview = models.TextField(
+        blank=True, default="", verbose_name="Превью вывода",
+    )
+    schedule = models.ForeignKey(
+        "scheduler.Schedule", on_delete=models.SET_NULL,
+        null=True, blank=True, verbose_name="Расписание",
+    )
+    schedule_log = models.ForeignKey(
+        "scheduler.ScheduleLog", on_delete=models.SET_NULL,
+        null=True, blank=True, verbose_name="Лог расписания",
+    )
+
+    class Meta:
+        verbose_name = "Запуск парсера"
+        verbose_name_plural = "Запуски парсера"
+        ordering = ("-started_at",)
+
+    def __str__(self):
+        return f"{self.get_command_display()} #{self.id} [{self.status}]"
+
+    @property
+    def duration_display(self) -> str:
+        if self.duration is None:
+            return "—"
+        if self.duration < 60:
+            return f"{self.duration:.1f} сек"
+        return f"{self.duration / 60:.1f} мин"

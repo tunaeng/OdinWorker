@@ -1,0 +1,52 @@
+<div id="runs-table">
+<table>
+  <thead>
+    <tr>
+      <th>ID</th>
+      <th>Команда</th>
+      <th>Статус</th>
+      <th>Запуск</th>
+      <th>Длительность</th>
+      <th>Метрики</th>
+      <th>Ошибка</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for run in last_runs %}
+    <tr>
+      <td>{{ run.id }}</td>
+      <td><span class="cmd-tag cmd-{{ run.command }}">{{ run.get_command_display }}</span></td>
+      <td><span class="status-badge badge-{{ run.status }}">{{ run.get_status_display }}</span></td>
+      <td class="time">{{ run.started_at|date:"H:i:s" }}</td>
+      <td class="duration">{{ run.duration_display }}</td>
+      <td class="metrics">
+        {% if run.metrics.ok is not None %}
+          <span class="ok">&#10003; {{ run.metrics.ok }}</span>
+        {% endif %}
+        {% if run.metrics.cache %}
+          <span class="cache">&#10227; {{ run.metrics.cache }}</span>
+        {% endif %}
+        {% if run.metrics.skipped %}
+          <span class="skip">&#10752; {{ run.metrics.skipped }}</span>
+        {% endif %}
+        {% if run.metrics.errors %}
+          <span class="errors">&#10007; {{ run.metrics.errors }}</span>
+        {% endif %}
+        {% if not run.metrics %}
+          —
+        {% endif %}
+      </td>
+      <td class="error-tip" title="{{ run.error_message|default:'' }}">
+        {% if run.error_message %}
+          {{ run.error_message|truncatechars:40 }}
+        {% else %}
+          —
+        {% endif %}
+      </td>
+    </tr>
+    {% empty %}
+    <tr><td colspan="7" style="text-align:center;color:#999;padding:40px;">Пока нет ни одного запуска</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>

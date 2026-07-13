@@ -8,6 +8,7 @@ from parser.models import (
     EducationalProgram,
     Group,
     LecturePresentation,
+    ParserRun,
     Student,
     StudentWork,
     University,
@@ -231,3 +232,60 @@ class LecturePresentationAdmin(admin.ModelAdmin):
         return super().get_queryset(request).select_related(
             "activity__discipline__cohort__educational_program__division__university",
         )
+
+
+# ---------------------------------------------------------------------------
+# ParserRun
+# ---------------------------------------------------------------------------
+
+@admin.register(ParserRun)
+class ParserRunAdmin(admin.ModelAdmin):
+    list_display = (
+        "id", "command_colored", "status_colored", "started_at",
+        "duration_display", "schedule_link",
+    )
+    list_filter = ("command", "status", "started_at")
+    search_fields = ("error_message",)
+    ordering = ("-started_at",)
+    readonly_fields = (
+        "command", "status", "started_at", "finished_at", "duration",
+        "metrics", "error_message", "output_preview", "schedule", "schedule_log",
+    )
+
+    @admin.display(description="Команда")
+    def command_colored(self, obj):
+        from django.utils.html import format_html
+        colors = {
+            "parse_structure": "#6b5b95",
+            "download_works": "#2e86ab",
+            "extract_pptx": "#a23b72",
+            "set_marks": "#f18f01",
+            "scheduled_run": "#4c9f70",
+        }
+        c = colors.get(obj.command, "#666")
+        return format_html(
+            '<span style="background:{};color:#fff;padding:2px 8px;border-radius:4px">{}</span>',
+            c, obj.get_command_display(),
+        )
+
+    @admin.display(description="Статус")
+    def status_colored(self, obj):
+        from django.utils.html import format_html
+        bg = {"running": "#2196F3", "success": "#4CAF50", "error": "#f44336"}
+        return format_html(
+            '<span style="background:{};color:#fff;padding:2px 8px;border-radius:4px">{}</span>',
+            bg.get(obj.status, "#999"), obj.get_status_display(),
+        )
+
+    @admin.display(description="Длительность")
+    def duration_display(self, obj):
+        return obj.duration_display
+
+    @admin.display(description="Расписание")
+    def schedule_link(self, obj):
+        if not obj.schedule_id:
+            return "—"
+        from django.urls import reverse
+        from django.utils.html import format_html
+        url = reverse("admin:scheduler_schedule_change", args=[obj.schedule_id])
+        return format_html('<a href="{}">{}</a>', url, obj.schedule.name if obj.schedule else f"#{obj.schedule_id}")

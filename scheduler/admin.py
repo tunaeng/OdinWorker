@@ -5,6 +5,7 @@ from pathlib import Path
 from django.contrib import admin
 from django.utils.html import format_html
 
+from parser.storage import s3_exists, s3_read_text
 from scheduler.models import Schedule, ScheduleLog
 
 
@@ -39,10 +40,10 @@ class ScheduleLogAdmin(admin.ModelAdmin):
 
     @admin.display(description="Превью лога")
     def log_preview(self, obj):
-        if not obj.log_path or not Path(obj.log_path).exists():
+        if not obj.log_path or not s3_exists(obj.log_path):
             return format_html("<pre>Лог ещё не создан</pre>")
         try:
-            text = Path(obj.log_path).read_text(encoding="utf-8")
+            text = s3_read_text(obj.log_path)
             return format_html("<pre style='max-height:400px;overflow:auto;background:#f5f5f5;padding:8px;'>{}</pre>", text[-5000:])
         except Exception:
             return format_html("<pre>Ошибка чтения лога</pre>")

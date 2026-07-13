@@ -13,7 +13,7 @@ from django.core.management.base import BaseCommand
 from django.utils import timezone
 
 from scheduler.models import Schedule
-from scheduler.runner import ensure_logs_dir, run_schedule
+from scheduler.runner import run_schedule
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +25,6 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         self.stdout.write("Демон-планировщик запущен. Проверка расписаний...")
-        ensure_logs_dir()
 
         while True:
             now = timezone.now()
