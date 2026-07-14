@@ -201,9 +201,19 @@ class StudentAdmin(admin.ModelAdmin):
 
 @admin.register(StudentWork)
 class StudentWorkAdmin(admin.ModelAdmin):
-    list_display = ("id", "student_id", "activity", "file_hash_short", "parsed_at")
-    list_filter = ("parsed_at", "activity__type")
+    list_display = ("id", "student_id", "activity", "status_colored", "file_hash_short", "parsed_at")
+    list_filter = ("status", "parsed_at", "activity__type")
     search_fields = ("file_hash",)
+
+    @admin.display(description="Статус")
+    def status_colored(self, obj):
+        from django.utils.html import format_html
+        colors = {"no_work": "#999", "has_work": "#2196F3", "has_mark": "#4CAF50"}
+        c = colors.get(obj.status, "#999")
+        return format_html(
+            '<span style="background:{};color:#fff;padding:2px 8px;border-radius:4px">{}</span>',
+            c, obj.get_status_display(),
+        )
 
     @admin.display(description="SHA-256")
     def file_hash_short(self, obj):

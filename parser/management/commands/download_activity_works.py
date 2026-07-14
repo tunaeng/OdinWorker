@@ -28,9 +28,6 @@ ACTIVITY_URL_TPL = (
     "https://www.odin.study/ru/ActivitySolution/Index/{activity_id}?userName="
 )
 
-MAX_RETRIES = 1
-WAIT_TIMEOUT_MS = 500
-
 
 class Command(BaseCommand):
     help = (
@@ -286,93 +283,88 @@ class Command(BaseCommand):
 
                     self.stdout.write(f"\n[{idx+1}/{len(student_rows)}] Студент: {current_student.last_name} {current_student.first_name} (ID={current_student.id})")
 
-                    existing = executor.submit(
-                        lambda sid=current_student.id: StudentWork.objects.filter(student_id=sid, activity=act).first()
-                    ).result()
-                    if existing:
-                        self.stdout.write(f"  -> [Кэш] Уже есть в БД (хэш: {existing.file_hash[:16]}…)")
-                        cache_count += 1
-                        continue
+                    has_mark = page.query_selector("div.mark-block.q-mx-sm") is not None
+                    if has_mark:
+                        self.stdout.write("  -> [Отметка] Обнаружен div.mark-block.q-mx-sm")
 
-                    found = False
-                    for attempt in range(1, MAX_RETRIES + 1):
-                        try:
-                            locator = page.locator(selector)
-                            locator.wait_for(state="attached", timeout=WAIT_TIMEOUT_MS)
-                            found = True
-                            break
-                        except PwTimeout:
-                            self.stdout.write(
-                                f"  -> [Ожидание] Кнопка не найдена, попытка {attempt}/{MAX_RETRIES}..."
+                    buttons = page.locator(selector).all()
+                    if buttons:
+                        self.stdout.write(f"  -> [Клик] Найдено кнопок: {len(buttons)}. Скачиваю поочередно...")
+                        for bi, btn in enumerate(buttons):
+                            try:
+                                with page.expect_download(timeout=30000) as download_info:
+                                    btn.click()
+                                download = download_info.value
+                            except Exception as e:
+                                self.stdout.write(f"  -> [Ошибка] Не удалось скачать файл #{bi+1}: {e}")
+                                continue
+
+                            tmp = tempfile.NamedTemporaryFile(delete=False)
+                            tmp_path = tmp.name
+                            tmp.close()
+                            try:
+                                download.save_as(tmp_path)
+                            except Exception as e:
+                                self.stdout.write(f"  -> [Ошибка] Сохранение файла #{bi+1} не удалось: {e}")
+                                Path(tmp_path).unlink(missing_ok=True)
+                                continue
+
+                            sha256 = hashlib.sha256()
+                            with open(tmp_path, "rb") as f:
+                                for chunk in iter(lambda: f.read(8192), b""):
+                                    sha256.update(chunk)
+                            file_hash = sha256.hexdigest()
+
+                            suggested = download.suggested_filename or ""
+                            ext = Path(suggested).suffix if "." in suggested else ".bin"
+
+                            existing_file = executor.submit(
+                                lambda h=file_hash: StudentWork.objects.filter(file_hash=h).first()
+                            ).result()
+                            if existing_file:
+                                Path(tmp_path).unlink(missing_ok=True)
+                                msg = "Взято из кэша (файл уже существует)"
+                                if bi == 0:
+                                    cache_count += 1
+                                continue
+
+                            with open(tmp_path, "rb") as f:
+                                content = f.read()
+                            _, key = upload_with_hash("solutions", ext, content)
+                            Path(tmp_path).unlink(missing_ok=True)
+
+                            solution_url = (
+                                f"https://www.odin.study/ru/ActivitySolution/Index/{activity_id}"
+                                f"?studentId={current_student.id}&userName="
                             )
-                            if attempt < MAX_RETRIES:
-                                page.wait_for_timeout(1000)
-
-                    if not found:
-                        self.stdout.write(f"  -> [Пусто] Студент {current_student.last_name} {current_student.first_name} не прикрепил работу.")
-                        skip_count += 1
-                        continue
-
-                    self.stdout.write("  -> [Клик] Кнопка найдена! Перехват скачивания из Yandex Cloud...")
-                    try:
-                        with page.expect_download(timeout=30000) as download_info:
-                            page.locator(selector).click()
-                        download = download_info.value
-                    except Exception as e:
-                        self.stdout.write(f"  -> [Ошибка] Не удалось скачать файл: {e}")
-                        skip_count += 1
-                        continue
-
-                    tmp = tempfile.NamedTemporaryFile(delete=False)
-                    tmp_path = tmp.name
-                    tmp.close()
-                    try:
-                        download.save_as(tmp_path)
-                    except Exception as e:
-                        self.stdout.write(f"  -> [Ошибка] Сохранение файла не удалось: {e}")
-                        Path(tmp_path).unlink(missing_ok=True)
-                        skip_count += 1
-                        continue
-
-                    sha256 = hashlib.sha256()
-                    with open(tmp_path, "rb") as f:
-                        for chunk in iter(lambda: f.read(8192), b""):
-                            sha256.update(chunk)
-                    file_hash = sha256.hexdigest()
-
-                    suggested = download.suggested_filename or ""
-                    ext = Path(suggested).suffix if "." in suggested else ".bin"
-
-                    existing_file = executor.submit(
-                        lambda h=file_hash: StudentWork.objects.filter(file_hash=h).first()
-                    ).result()
-                    if existing_file:
-                        Path(tmp_path).unlink(missing_ok=True)
-                        local_path = existing_file.local_path
-                        msg = "Взято из кэша (файл уже существует на диске)"
-                        cache_count += 1
+                            status = "has_mark" if has_mark else "has_work"
+                            executor.submit(
+                                lambda sid=current_student.id, act=act, fhash=file_hash,
+                                       lpath=key, surl=solution_url, st=status:
+                                StudentWork.objects.create(
+                                    student_id=sid,
+                                    activity=act,
+                                    status=st,
+                                    file_hash=fhash,
+                                    local_path=lpath,
+                                    solution_url=surl,
+                                )
+                            ).result()
+                            self.stdout.write(f"    [{bi+1}/{len(buttons)}] Сохранено. Хэш: {file_hash[:16]}…")
+                            if bi == 0:
+                                ok_count += 1
                     else:
-                        with open(tmp_path, "rb") as f:
-                            content = f.read()
-                        _, key = upload_with_hash("solutions", ext, content)
-                        Path(tmp_path).unlink(missing_ok=True)
-                        local_path = key
-                        msg = "Сохранено как новый файл"
-                        ok_count += 1
-
-                    solution_url = (
-                        f"https://www.odin.study/ru/ActivitySolution/Index/{activity_id}"
-                        f"?studentId={current_student.id}&userName="
-                    )
-                    executor.submit(
-                        lambda sid=current_student.id, act=act, fhash=file_hash, lpath=local_path, surl=solution_url:
-                        StudentWork.objects.update_or_create(
-                            student_id=sid,
-                            activity=act,
-                            defaults={"file_hash": fhash, "local_path": lpath, "solution_url": surl},
-                        )
-                    ).result()
-                    self.stdout.write(f"  -> [Успех] {msg}. Хэш: {file_hash[:16]}…")
+                        self.stdout.write("  -> [Пусто] Студент не прикрепил работу.")
+                        status = "has_mark" if has_mark else "no_work"
+                        executor.submit(
+                            lambda sid=current_student.id, act=act, st=status:
+                            StudentWork.objects.create(
+                                student_id=sid,
+                                activity=act,
+                                status=st,
+                            )
+                        ).result()
+                        skip_count += 1
             except Exception as e:
                 self.stderr.write(self.style.ERROR(f"  [ОШИБКА] {e}"))
                 pw_error = str(e)

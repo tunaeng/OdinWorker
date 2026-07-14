@@ -151,13 +151,29 @@ class Student(models.Model):
 
 
 class StudentWork(models.Model):
+    STATUS_CHOICES = [
+        ("no_work", "Нет работы"),
+        ("has_work", "Есть работа"),
+        ("has_mark", "Есть отметка"),
+    ]
+
     student_id = models.IntegerField(verbose_name="ID студента")
     activity = models.ForeignKey(
         Activity, on_delete=models.CASCADE,
         related_name="student_works", verbose_name="Активность"
     )
-    file_hash = models.CharField(max_length=64, verbose_name="SHA-256 хэш файла")
-    local_path = models.CharField(max_length=1024, verbose_name="Путь к файлу на диске")
+    status = models.CharField(
+        max_length=16, choices=STATUS_CHOICES,
+        default="no_work", verbose_name="Статус",
+    )
+    file_hash = models.CharField(
+        max_length=64, verbose_name="SHA-256 хэш файла",
+        null=True, blank=True,
+    )
+    local_path = models.CharField(
+        max_length=1024, verbose_name="Путь к файлу",
+        null=True, blank=True,
+    )
     solution_url = models.URLField(
         max_length=2048, verbose_name="Ссылка на страницу решения", null=True, blank=True
     )
@@ -168,10 +184,9 @@ class StudentWork(models.Model):
     class Meta:
         verbose_name = "Работа студента"
         verbose_name_plural = "Работы студентов"
-        unique_together = ("student_id", "activity")
 
     def __str__(self):
-        return f"Student {self.student_id} / Activity {self.activity_id}"
+        return f"Student {self.student_id} / Activity {self.activity_id} [{self.get_status_display()}]"
 
 
 class LecturePresentation(models.Model):
