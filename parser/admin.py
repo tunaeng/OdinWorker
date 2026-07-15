@@ -59,6 +59,14 @@ class DisciplineInline(admin.TabularInline):
     fields = ("id", "name")
 
 
+class ActivityInline(admin.TabularInline):
+    model = Activity
+    extra = 0
+    show_change_link = True
+    fields = ("id", "name", "type", "start_date", "end_date")
+    readonly_fields = ("id",)
+
+
 # ---------------------------------------------------------------------------
 # University
 # ---------------------------------------------------------------------------
@@ -66,6 +74,7 @@ class DisciplineInline(admin.TabularInline):
 @admin.register(University)
 class UniversityAdmin(admin.ModelAdmin):
     list_display = ("id", "name", "city_name")
+    search_fields = ("name", "city_name")
     inlines = [DivisionInline]
 
 
@@ -77,7 +86,7 @@ class UniversityAdmin(admin.ModelAdmin):
 class DivisionAdmin(admin.ModelAdmin):
     list_display = ("id", "name", "type_of_string", "university")
     list_filter = ("university", "type_of_string")
-    search_fields = ("name",)
+    search_fields = ("name", "short_name", "type_of_string", "university__name")
     inlines = [EducationalProgramInline]
 
     def get_queryset(self, request):
@@ -92,7 +101,7 @@ class DivisionAdmin(admin.ModelAdmin):
 class EducationalProgramAdmin(admin.ModelAdmin):
     list_display = ("id", "name", "degree", "division", "university_name")
     list_filter = ("degree", "division__university")
-    search_fields = ("name",)
+    search_fields = ("name", "short_name", "degree", "division__name")
     inlines = [CohortInline]
 
     @admin.display(description="Университет")
@@ -114,6 +123,7 @@ class CohortAdmin(admin.ModelAdmin):
         "educational_program",
     )
     list_filter = ("start_education_date", "educational_program__division__university")
+    search_fields = ("title", "name", "educational_program__name")
     inlines = [GroupInline, DisciplineInline]
 
     def get_queryset(self, request):
@@ -129,7 +139,7 @@ class CohortAdmin(admin.ModelAdmin):
 @admin.register(Group)
 class GroupAdmin(admin.ModelAdmin):
     list_display = ("id", "title", "students_number", "cohort")
-    search_fields = ("title",)
+    search_fields = ("title", "cohort__title", "cohort__name")
 
     def get_queryset(self, request):
         return super().get_queryset(request).select_related(
@@ -144,7 +154,8 @@ class GroupAdmin(admin.ModelAdmin):
 @admin.register(Discipline)
 class DisciplineAdmin(admin.ModelAdmin):
     list_display = ("id", "name", "cohort", "cohort_title")
-    search_fields = ("name",)
+    search_fields = ("name", "cohort__title", "cohort__name")
+    inlines = [ActivityInline]
 
     @admin.display(description="Поток")
     def cohort_title(self, obj):
@@ -166,7 +177,7 @@ class ActivityAdmin(admin.ModelAdmin):
         "id", "name", "type", "end_date", "discipline", "cohort_name",
     )
     list_filter = ("type", "end_date", "discipline__cohort")
-    search_fields = ("name",)
+    search_fields = ("name", "type", "discipline__name")
 
     @admin.display(description="Поток")
     def cohort_name(self, obj):
@@ -186,7 +197,7 @@ class ActivityAdmin(admin.ModelAdmin):
 @admin.register(Student)
 class StudentAdmin(admin.ModelAdmin):
     list_display = ("id", "last_name", "first_name", "middle_name", "group")
-    search_fields = ("last_name", "first_name")
+    search_fields = ("last_name", "first_name", "middle_name")
     list_filter = ("group",)
 
     def get_queryset(self, request):
@@ -203,7 +214,7 @@ class StudentAdmin(admin.ModelAdmin):
 class StudentWorkAdmin(admin.ModelAdmin):
     list_display = ("id", "student_id", "activity", "status_colored", "file_hash_short", "parsed_at")
     list_filter = ("status", "parsed_at", "activity__type")
-    search_fields = ("file_hash",)
+    search_fields = ("student_id", "file_hash", "activity__name", "status")
 
     @admin.display(description="Статус")
     def status_colored(self, obj):
@@ -228,7 +239,7 @@ class StudentWorkAdmin(admin.ModelAdmin):
 class LecturePresentationAdmin(admin.ModelAdmin):
     list_display = ("activity", "file_path_short", "file_hash_short", "parsed_at")
     list_filter = ("parsed_at",)
-    search_fields = ("file_path",)
+    search_fields = ("file_path", "file_hash", "activity__name")
 
     @admin.display(description="Путь из API")
     def file_path_short(self, obj):
@@ -255,7 +266,7 @@ class ParserRunAdmin(admin.ModelAdmin):
         "duration_display", "schedule_link",
     )
     list_filter = ("command", "status", "started_at")
-    search_fields = ("error_message",)
+    search_fields = ("error_message", "command", "status")
     ordering = ("-started_at",)
     readonly_fields = (
         "command", "status", "started_at", "finished_at", "duration",
