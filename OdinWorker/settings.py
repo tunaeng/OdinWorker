@@ -86,6 +86,12 @@ DATABASES = {
     }
 }
 
+_db_schema = os.getenv('DB_SCHEMA', '').strip()
+if _db_schema:
+    DATABASES['default']['OPTIONS'] = {
+        'options': f'-c search_path={_db_schema},odin'
+    }
+
 
 # Password validation
 # https://docs.djangoproject.com/en/6.0/ref/settings/#auth-password-validators
