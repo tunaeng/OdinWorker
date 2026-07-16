@@ -139,7 +139,7 @@ class CohortAdmin(admin.ModelAdmin):
 @admin.register(Group)
 class GroupAdmin(admin.ModelAdmin):
     list_display = ("id", "title", "students_number", "cohort")
-    search_fields = ("title", "cohort__title", "cohort__name")
+    search_fields = ("id","title", "cohort__title", "cohort__name")
 
     def get_queryset(self, request):
         return super().get_queryset(request).select_related(
@@ -154,7 +154,7 @@ class GroupAdmin(admin.ModelAdmin):
 @admin.register(Discipline)
 class DisciplineAdmin(admin.ModelAdmin):
     list_display = ("id", "name", "cohort", "cohort_title")
-    search_fields = ("name", "cohort__title", "cohort__name")
+    search_fields = ("id","name", "cohort__title", "cohort__name")
     inlines = [ActivityInline]
 
     @admin.display(description="Поток")
@@ -177,7 +177,7 @@ class ActivityAdmin(admin.ModelAdmin):
         "id", "name", "type", "end_date", "discipline", "cohort_name",
     )
     list_filter = ("type", "end_date", "discipline__cohort")
-    search_fields = ("name", "type", "discipline__name")
+    search_fields = ("id","name", "type", "discipline__name")
 
     @admin.display(description="Поток")
     def cohort_name(self, obj):
@@ -197,7 +197,7 @@ class ActivityAdmin(admin.ModelAdmin):
 @admin.register(Student)
 class StudentAdmin(admin.ModelAdmin):
     list_display = ("id", "last_name", "first_name", "middle_name", "group")
-    search_fields = ("last_name", "first_name", "middle_name")
+    search_fields = ("id","last_name", "first_name", "middle_name")
     list_filter = ("group",)
 
     def get_queryset(self, request):
@@ -239,7 +239,7 @@ class StudentWorkAdmin(admin.ModelAdmin):
 class LecturePresentationAdmin(admin.ModelAdmin):
     list_display = ("activity", "file_path_short", "file_hash_short", "parsed_at")
     list_filter = ("parsed_at",)
-    search_fields = ("file_path", "file_hash", "activity__name")
+    search_fields = ("activity__id","file_path", "file_hash", "activity__name")
 
     @admin.display(description="Путь из API")
     def file_path_short(self, obj):
