@@ -237,7 +237,7 @@ class StudentWorkAdmin(admin.ModelAdmin):
 
 @admin.register(LecturePresentation)
 class LecturePresentationAdmin(admin.ModelAdmin):
-    list_display = ("activity", "file_path_short", "file_hash_short", "parsed_at")
+    list_display = ("activity__id","file_path_short", "file_hash_short","activity", "parsed_at")
     list_filter = ("parsed_at",)
     search_fields = ("activity__id","file_path", "file_hash", "activity__name")
 
