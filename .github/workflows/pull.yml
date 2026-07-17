@@ -1,0 +1,18 @@
+name: Local Git Pull Rebase
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    # Указываем GitHub отправлять задачу именно на ваш сервер
+    runs-on: [self-hosted] 
+
+    steps:
+      - name: Pull and Rebase changes locally
+        run: |
+          cd ${{ vars.PROJECT_PATH }}
+          git fetch origin
+          git pull --rebase origin main
