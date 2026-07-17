@@ -16,3 +16,4 @@ jobs:
           cd ${{ vars.PROJECT_PATH }}
           git fetch origin
           git pull --rebase origin main
+          git push gitlab main
