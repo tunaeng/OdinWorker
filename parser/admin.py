@@ -123,7 +123,7 @@ class CohortAdmin(admin.ModelAdmin):
         "educational_program",
     )
     list_filter = ("start_education_date", "educational_program__division__university")
-    search_fields = ("title", "name", "educational_program__name")
+    search_fields = ("id","title", "name", "educational_program__name")
     inlines = [GroupInline, DisciplineInline]
 
     def get_queryset(self, request):
@@ -236,7 +236,7 @@ class StudentWorkAdmin(admin.ModelAdmin):
 # ---------------------------------------------------------------------------
 
 @admin.register(LecturePresentation)
-class LecturePresentationAdmin(admin.ModelAdmin):
+# class LecturePresentationAdmin(admin.ModelAdmin):
     list_display = ("activity__id","file_path_short", "file_hash_short","activity", "parsed_at")
     list_filter = ("parsed_at",)
     search_fields = ("activity__id","file_path", "file_hash", "activity__name")
